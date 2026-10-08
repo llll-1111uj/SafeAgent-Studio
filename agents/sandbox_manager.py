@@ -1,19 +1,26 @@
-"""Docker sandbox lane for one task.
+"""Docker sandbox lane: one task, one container.
 
-This pass covers method signatures, return values, and docker CLI argv
-assembly from docs/sandbox_design.md. Index persistence, TaskManager
-binding, EventBus, failure rollback, and startup reconciliation come next.
+Host-side seeding streams `git archive` into `docker run tar` with
+subprocess pipes. No shell is started, so Windows does not depend on a
+POSIX `|` operator.
 
 sandbox_id is the container name: sa-{task_id}-{name}.
+Index file: {repo_root}/.worktrees/index.json, key "sandboxes".
 """
 
 from __future__ import annotations
 
+import copy
+import json
+import os
 import re
 import subprocess
+import threading
 import time
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TypedDict
+from typing import Callable, Iterator, TypedDict
 
 
 DEFAULT_IMAGE = "safeagent-sandbox:py310"
@@ -22,43 +29,29 @@ KILL_GRACE_SECONDS = 10
 TASK_TTL_SECONDS = 30 * 60
 KEEP_TTL_SECONDS = 24 * 60 * 60
 OUTPUT_LIMIT = 50_000
+MAX_ACTIVE = 4
 TIMEOUT_MESSAGE = "Error: Timeout (300s)"
 
-# Same charset as WorktreeManager._validate_name.
 _NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,40}")
 _SANDBOX_ID_RE = re.compile(r"^sa-(\d+)-([A-Za-z0-9._-]{1,40})$")
+_LIVE_STATUSES = {"creating", "active", "kept", "removing"}
+_TRANSITIONS = {
+    "creating": {"active", "failed", "removing"},
+    "active": {"kept", "removing", "failed"},
+    "kept": {"removing", "failed"},
+    "removing": {"removed", "failed", "active", "kept"},
+    "failed": {"removing"},
+    "removed": set(),
+    "timed_out": {"removing", "failed"},
+}
 
 
-class SandboxLimits(TypedDict):
-    cpus: float
-    memory: str
-    pids: int
+class SandboxError(RuntimeError):
+    """Docker or index operation failed. Resources were rolled back when possible."""
 
 
-class SandboxEntry(TypedDict):
-    name: str
-    task_id: int
-    status: str
-    container_name: str
-    container_id: str
-    image: str
-    workspace_volume: str
-    output_volume: str
-    created_at: float
-    deadline_ts: float
-    limits: SandboxLimits
-
-
-class CreateCommands(TypedDict):
-    volume_create: list[list[str]]
-    seed_archive: list[str]
-    seed_extract: list[str]
-    run: list[str]
-
-
-class CreateSandboxResult(TypedDict):
-    entry: SandboxEntry
-    commands: CreateCommands
+class SandboxConsistencyError(SandboxError):
+    """Docker and index.json do not describe the same sandbox."""
 
 
 class ExecResult(TypedDict):
@@ -69,26 +62,8 @@ class ExecResult(TypedDict):
     message: str
 
 
-class KeepSandboxResult(TypedDict):
-    sandbox_id: str
-    status: str
-    workspace_volume: str
-    output_volume: str
-    deadline_ts: float
-    volume_retain_until: float
-    commands: list[list[str]]
-
-
-class RemoveSandboxResult(TypedDict):
-    sandbox_id: str
-    status: str
-    workspace_volume: str
-    output_volume: str
-    commands: list[list[str]]
-
-
 def parse_sandbox_id(sandbox_id: str) -> tuple[int, str]:
-    """Return (task_id, name) from a container name sa-{task_id}-{name}."""
+    """Return (task_id, name) from container name sa-{task_id}-{name}."""
     matched = _SANDBOX_ID_RE.fullmatch(sandbox_id or "")
     if not matched:
         raise ValueError("Invalid sandbox_id. Expected sa-{task_id}-{name}")
@@ -114,32 +89,39 @@ def _timeout_result(stdout: str | bytes | None = None, stderr: str | bytes | Non
 
 
 class SandboxManager:
-    """One task, one container. Command builders are the source of the docker CLI."""
+    """Create, exec, keep, and remove a per-task Docker sandbox."""
 
-    def __init__(self, repo_root: Path | None = None, *, image: str = DEFAULT_IMAGE):
+    def __init__(self, repo_root: Path | str | None = None, *, image: str = DEFAULT_IMAGE):
         self.repo_root = Path(repo_root) if repo_root is not None else Path.cwd()
+        self.repo_root = self.repo_root.resolve()
         self.image = image
         self.exec_timeout = EXEC_TIMEOUT_SECONDS
         self.kill_grace = KILL_GRACE_SECONDS
         self.task_ttl = TASK_TTL_SECONDS
         self.keep_ttl = KEEP_TTL_SECONDS
-        # Confirmation aid: argv staged here, not executed and not written to the index.
-        self._plans: dict[str, dict] = {}
+        self.max_active = MAX_ACTIVE
+        self.index_path = self.repo_root / ".worktrees" / "index.json"
+        self.events_path = self.repo_root / ".worktrees" / "events.jsonl"
+        self.tasks_dir = self.repo_root / ".tasks"
+        self._lock_path = self.repo_root / ".worktrees" / "index.lock"
 
-    def create_sandbox(self, name: str, task_id: int, base_ref: str = "HEAD") -> CreateSandboxResult:
-        """Stage a sandbox lane.
+    def create_sandbox(self, name: str, task_id: int, base_ref: str = "HEAD") -> dict:
+        """Create volumes, seed the workspace, start the container, and record it.
 
-        Returns the index entry (status=creating) plus the docker argv that the
-        next pass will run, in this order: create two volumes, git archive into
-        sa-ws-{task_id}, docker run -d. Does not call Docker, write the index,
-        or bind the task.
+        Returns the index entry. status is active and container_id is set.
+        On any failure after resources exist, the container and both volumes
+        are removed and the index entry is marked failed. The task is not bound.
         """
         self._validate_name(name)
+        self._validate_task_id(task_id)
+        self._assert_task_exists(task_id)
+        commit = self._resolve_commit(base_ref)
+
         now = time.time()
         container_name = f"sa-{task_id}-{name}"
         workspace_volume = f"sa-ws-{task_id}"
         output_volume = f"sa-out-{task_id}"
-        entry: SandboxEntry = {
+        entry = {
             "name": name,
             "task_id": task_id,
             "status": "creating",
@@ -148,97 +130,234 @@ class SandboxManager:
             "image": self.image,
             "workspace_volume": workspace_volume,
             "output_volume": output_volume,
+            "base_commit": commit,
             "created_at": now,
             "deadline_ts": now + self.task_ttl,
             "limits": {"cpus": 1.0, "memory": "512m", "pids": 128},
+            "error": "",
         }
-        commands: CreateCommands = {
-            "volume_create": [
-                self.build_volume_create_command(workspace_volume),
-                self.build_volume_create_command(output_volume),
-            ],
-            "seed_archive": self.build_seed_archive_command(base_ref),
-            "seed_extract": self.build_seed_extract_command(workspace_volume),
-            "run": self.build_run_command(
-                container_name=container_name,
-                task_id=task_id,
-                workspace_volume=workspace_volume,
-                output_volume=output_volume,
-            ),
-        }
-        self._plans[container_name] = dict(commands)
-        return {"entry": entry, "commands": commands}
+        self._emit("sandbox.create.before", entry)
+        self._mutate(lambda data: self._reserve(data, entry))
+
+        containers: list[str] = []
+        volumes: list[str] = []
+        try:
+            for volume in (workspace_volume, output_volume):
+                volumes.append(volume)
+                self._create_fresh_volume(volume)
+            seed_name = f"{container_name}-seed"
+            containers.append(seed_name)
+            self._seed_workspace(workspace_volume, commit, seed_name)
+            chown_name = f"{container_name}-chown"
+            containers.append(chown_name)
+            self._chown_volumes(workspace_volume, output_volume, chown_name)
+            # One-shot helpers use --rm. Drop them from the rollback list once they exit.
+            containers.clear()
+            containers.append(container_name)
+            started = self._run(
+                self.build_run_command(
+                    container_name=container_name,
+                    task_id=task_id,
+                    workspace_volume=workspace_volume,
+                    output_volume=output_volume,
+                ),
+                timeout=120,
+            )
+            container_id = started.stdout.strip()
+            if not container_id:
+                raise SandboxError("docker run returned an empty container id")
+            entry["container_id"] = container_id
+            entry["status"] = "active"
+            entry["error"] = ""
+            saved = self._mutate(lambda data: self._activate(data, entry))
+            try:
+                self._bind_task(task_id, name)
+            except Exception as bind_exc:
+                rollback_errors = self._rollback_containers(containers) + self._rollback_volumes(volumes)
+                detail = "task bind failed after container start"
+                if rollback_errors:
+                    detail = f"{detail}; rollback: {'; '.join(rollback_errors)}"
+                self._mark_failed(container_name, detail)
+                raise SandboxError(detail) from bind_exc
+            self._emit("sandbox.create.after", saved)
+            return saved
+        except Exception as exc:
+            rollback_errors = self._rollback_containers(containers) + self._rollback_volumes(volumes)
+            self._mark_failed(container_name, str(exc))
+            self._emit("sandbox.create.failed", entry, error=str(exc))
+            leftover = False
+            try:
+                leftover = self._container_exists(container_name) or any(
+                    self._volume_exists(volume) for volume in volumes
+                )
+            except SandboxError:
+                leftover = True
+            if leftover or rollback_errors:
+                raise SandboxConsistencyError(
+                    f"create failed and leftover Docker resources remain for {container_name}: {exc}"
+                    + (f"; rollback: {'; '.join(rollback_errors)}" if rollback_errors else "")
+                ) from exc
+            raise
 
     def execute(self, sandbox_id: str, command: str) -> ExecResult:
-        """docker exec in /workspace as uid 1000, with a 300s process-group timeout.
+        """Run command in /workspace as uid 1000.
 
-        GNU timeout puts `sh -c` in its own process group and sends SIGTERM,
-        then SIGKILL after 10s. PID 1 (`sleep infinity`) is not in that group.
-        A hung local docker CLI is killed by subprocess; the container is left up.
+        The 300s limit applies to the exec'd process group. On expiry that
+        group receives SIGTERM, then SIGKILL 10s later. The container PID 1
+        is not signalled.
+        """
+        if "\x00" in command:
+            raise ValueError("command must not contain NUL")
+        parse_sandbox_id(sandbox_id)
+        entry = self._load_entry(sandbox_id)
+        if entry["status"] != "active":
+            raise SandboxError(f"sandbox {sandbox_id} is {entry['status']}, exec requires active")
+        if not self._container_running(sandbox_id):
+            self._mark_failed(sandbox_id, "index says active but container is not running")
+            raise SandboxConsistencyError(
+                f"index says {sandbox_id} is active, but the container is not running"
+            )
+
+        token = uuid.uuid4().hex
+        proc = subprocess.Popen(
+            self._build_exec_argv(sandbox_id, command, token),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=self.exec_timeout)
+        except subprocess.TimeoutExpired:
+            self._terminate_exec_group(sandbox_id, token)
+            try:
+                stdout, stderr = proc.communicate(timeout=self.kill_grace + 20)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+            self._emit("sandbox.exec.timeout", entry)
+            return _timeout_result(stdout, stderr)
+
+        return {
+            "stdout": _clip(stdout),
+            "stderr": _clip(stderr),
+            "exit_code": int(proc.returncode if proc.returncode is not None else 1),
+            "timed_out": False,
+            "message": "",
+        }
+
+    def keep_sandbox(self, sandbox_id: str) -> dict:
+        """Stop the container, keep both volumes, and cancel the destroy lease.
+
+        Transition: active -> kept. A second call on an already kept sandbox
+        returns the current entry.
         """
         parse_sandbox_id(sandbox_id)
-        argv = self.build_exec_command(sandbox_id, command)
+        entry = self._load_entry(sandbox_id)
+        if entry["status"] == "kept":
+            return entry
+        if entry["status"] != "active":
+            raise SandboxError(f"cannot keep sandbox from status {entry['status']}")
+
+        self._emit("sandbox.keep.before", entry)
         try:
-            completed = subprocess.run(
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=self.exec_timeout + self.kill_grace + 15,
+            self._run(["docker", "stop", sandbox_id], timeout=60)
+        except SandboxError as exc:
+            if self._container_exists(sandbox_id):
+                raise SandboxError(f"docker stop failed, sandbox stays active: {exc}") from exc
+            self._mark_failed(sandbox_id, f"keep failed, container missing: {exc}")
+            raise SandboxConsistencyError(
+                f"index said active but container {sandbox_id} was already gone"
+            ) from exc
+
+        retain_until = time.time() + self.keep_ttl
+        try:
+            saved = self._mutate(
+                lambda data: self._transition(
+                    data,
+                    sandbox_id,
+                    "kept",
+                    extra={
+                        "deadline_ts": 0,
+                        "kept_at": time.time(),
+                        "volume_retain_until": retain_until,
+                        "error": "",
+                    },
+                )
             )
-        except subprocess.TimeoutExpired as exc:
-            return _timeout_result(exc.stdout, exc.stderr)
+        except Exception as exc:
+            raise SandboxConsistencyError(
+                f"container {sandbox_id} is stopped but index.json could not be marked kept: {exc}"
+            ) from exc
+        self._emit("sandbox.keep", saved)
+        return saved
 
-        timed_out = completed.returncode == 124
-        return {
-            "stdout": _clip(completed.stdout),
-            "stderr": _clip(completed.stderr),
-            "exit_code": completed.returncode,
-            "timed_out": timed_out,
-            "message": TIMEOUT_MESSAGE if timed_out else "",
-        }
+    def remove_sandbox(self, sandbox_id: str, force: bool = False, *, complete_task: bool = False) -> dict:
+        """Stop, delete the container and both volumes, then mark the index removed.
 
-    def keep_sandbox(self, sandbox_id: str) -> KeepSandboxResult:
-        """Stop the container and keep both volumes.
-
-        Cancels the 30-minute destroy lease and sets a 24h volume retention.
-        Does not docker commit, docker rm, or delete volumes.
+        Transition: active|kept|failed|creating -> removing -> removed.
+        force=False restores the previous status when stop fails and the
+        container is still running. complete_task=True also marks the task completed.
         """
         task_id, _name = parse_sandbox_id(sandbox_id)
-        commands = [self.build_stop_command(sandbox_id)]
-        self._plans[sandbox_id] = {"keep": commands}
-        return {
-            "sandbox_id": sandbox_id,
-            "status": "kept",
-            "workspace_volume": f"sa-ws-{task_id}",
-            "output_volume": f"sa-out-{task_id}",
-            "deadline_ts": 0,
-            "volume_retain_until": time.time() + self.keep_ttl,
-            "commands": commands,
-        }
+        entry = self._load_entry(sandbox_id)
+        previous = entry["status"]
+        if previous == "removed":
+            return entry
+        if previous not in {"creating", "active", "kept", "failed", "removing"}:
+            raise SandboxError(f"cannot remove sandbox from status {previous}")
 
-    def remove_sandbox(self, sandbox_id: str) -> RemoveSandboxResult:
-        """Stage stop, rm, and volume deletion.
+        self._emit("sandbox.remove.before", entry)
+        if previous != "removing":
+            entry = self._mutate(lambda data: self._transition(data, sandbox_id, "removing", extra={"error": ""}))
 
-        Order: docker stop -t 10, docker rm -f, delete sa-ws-{task_id} and
-        sa-out-{task_id}. Does not call Docker or unbind the task.
-        """
-        task_id, _name = parse_sandbox_id(sandbox_id)
-        workspace_volume = f"sa-ws-{task_id}"
-        output_volume = f"sa-out-{task_id}"
-        commands = [
-            self.build_stop_command(sandbox_id, timeout=10),
-            ["docker", "rm", "-f", sandbox_id],
-            ["docker", "volume", "rm", workspace_volume],
-            ["docker", "volume", "rm", output_volume],
-        ]
-        self._plans[sandbox_id] = {"remove": commands}
-        return {
-            "sandbox_id": sandbox_id,
-            "status": "removed",
-            "workspace_volume": workspace_volume,
-            "output_volume": output_volume,
-            "commands": commands,
-        }
+        workspace_volume = entry["workspace_volume"]
+        output_volume = entry["output_volume"]
+        try:
+            self._stop_for_remove(sandbox_id, force=force, previous=previous)
+        except SandboxError:
+            self._emit("sandbox.remove.failed", entry, error="docker stop failed")
+            raise
+        try:
+            self._run_allow_missing(["docker", "rm", "-f", sandbox_id], timeout=60)
+            self._run_allow_missing(["docker", "volume", "rm", workspace_volume], timeout=60)
+            self._run_allow_missing(["docker", "volume", "rm", output_volume], timeout=60)
+        except Exception as exc:
+            self._mark_failed(sandbox_id, str(exc))
+            self._emit("sandbox.remove.failed", entry, error=str(exc))
+            raise
+
+        if self._container_exists(sandbox_id) or self._volume_exists(workspace_volume) or self._volume_exists(output_volume):
+            self._mark_failed(sandbox_id, "remove finished but Docker resources are still present")
+            self._emit("sandbox.remove.failed", entry, error="leftover resources")
+            raise SandboxConsistencyError(
+                f"remove of {sandbox_id} left Docker resources behind; index marked failed"
+            )
+
+        try:
+            saved = self._mutate(
+                lambda data: self._transition(
+                    data,
+                    sandbox_id,
+                    "removed",
+                    extra={"removed_at": time.time(), "error": ""},
+                )
+            )
+        except Exception as exc:
+            raise SandboxConsistencyError(
+                f"Docker resources for {sandbox_id} are gone, but index.json is still not removed: {exc}"
+            ) from exc
+
+        try:
+            self._unbind_task(task_id, complete=complete_task)
+        except Exception as exc:
+            self._emit("sandbox.remove.failed", saved, error=f"unbind failed: {exc}")
+            raise SandboxConsistencyError(
+                f"sandbox {sandbox_id} is removed, but task {task_id} could not be unbound: {exc}"
+            ) from exc
+        if complete_task:
+            self._emit("task.completed", saved)
+        self._emit("sandbox.remove.after", saved)
+        return saved
 
     def build_run_command(
         self,
@@ -248,11 +367,7 @@ class SandboxManager:
         workspace_volume: str,
         output_volume: str,
     ) -> list[str]:
-        """Assemble `docker run -d` for a long-lived lane.
-
-        Host env is not passed. No bind mount of the repo, Docker socket, or home.
-        Workspace quota (2GB sparse file) is not applied in this pass.
-        """
+        """docker run argv for a long-lived lane. Host env is not forwarded."""
         return [
             "docker", "run", "-d",
             "--name", container_name,
@@ -277,56 +392,476 @@ class SandboxManager:
             "infinity",
         ]
 
-    def build_exec_command(self, sandbox_id: str, command: str) -> list[str]:
-        """docker exec as uid 1000. `timeout` signals the exec process group only."""
+    def _build_exec_argv(self, sandbox_id: str, command: str, token: str) -> list[str]:
+        out = f"/tmp/sa-{token}.out"
+        err = f"/tmp/sa-{token}.err"
+        pid = f"/tmp/sa-{token}.pid"
+        # setsid starts the command in its own process group (pgid == $!).
+        # The wrapper shell stays in a different group, so killing -pgid does
+        # not kill container PID 1.
+        script = "\n".join([
+            "set +e",
+            f'out="{out}"',
+            f'err="{err}"',
+            f'pidfile="{pid}"',
+            'if command -v setsid >/dev/null 2>&1; then',
+            '  setsid sh -c "$SA_CMD" >"$out" 2>"$err" </dev/null &',
+            "else",
+            '  sh -c "$SA_CMD" >"$out" 2>"$err" </dev/null &',
+            "fi",
+            'echo "$!" > "$pidfile"',
+            'wait "$!"',
+            "status=$?",
+            'cat "$out"',
+            'cat "$err" >&2',
+            'exit "$status"',
+        ])
         return [
             "docker", "exec",
-            "--user", "1000:1000",
+            "-u", "1000:1000",
             "-w", "/workspace",
+            "-e", f"SA_CMD={command}",
             sandbox_id,
-            "timeout",
-            "--signal=TERM",
-            "-k", str(self.kill_grace),
-            str(self.exec_timeout),
-            "sh", "-c", command,
+            "sh", "-c", script,
         ]
 
-    def build_kill_process_group_command(self, sandbox_id: str, pgid: int, signal: str) -> list[str]:
-        """Kill one in-container process group. signal is TERM or KILL. Never targets PID 1."""
-        if signal not in ("TERM", "KILL"):
-            raise ValueError("signal must be TERM or KILL")
+    def _terminate_exec_group(self, sandbox_id: str, token: str) -> None:
+        """SIGTERM the exec process group, then SIGKILL after the grace period."""
+        pgid = self._read_exec_pgid(sandbox_id, token)
+        if pgid is None:
+            return
+        self._signal_group(sandbox_id, pgid, "TERM")
+        time.sleep(self.kill_grace)
+        self._signal_group(sandbox_id, pgid, "KILL")
+
+    def _read_exec_pgid(self, sandbox_id: str, token: str) -> int | None:
+        result = self._run(
+            ["docker", "exec", "-u", "1000:1000", sandbox_id, "cat", f"/tmp/sa-{token}.pid"],
+            timeout=20,
+            check=False,
+        )
+        text = (result.stdout or "").strip()
+        if result.returncode != 0 or not text.isdigit():
+            return None
+        pgid = int(text)
         if pgid <= 1:
-            raise ValueError("refusing to signal PID 1 or an invalid process group")
-        return [
-            "docker", "exec",
-            "--user", "1000:1000",
-            sandbox_id,
-            "kill", f"-{signal}", "--", f"-{pgid}",
-        ]
+            return None
+        return pgid
 
-    def build_volume_create_command(self, volume_name: str) -> list[str]:
-        return ["docker", "volume", "create", volume_name]
+    def _signal_group(self, sandbox_id: str, pgid: int, signal: str) -> None:
+        if signal not in {"TERM", "KILL"} or pgid <= 1:
+            raise SandboxError("refusing to signal container PID 1")
+        self._run(
+            ["docker", "exec", "-u", "1000:1000", sandbox_id, "kill", "-s", signal, "--", f"-{pgid}"],
+            timeout=20,
+            check=False,
+        )
 
-    def build_seed_archive_command(self, base_ref: str) -> list[str]:
-        """Host-side `git archive`. cwd is repo_root. base_ref is not resolved yet."""
-        return ["git", "-C", str(self.repo_root), "archive", base_ref]
+    def _seed_workspace(self, workspace_volume: str, commit: str, container_name: str) -> None:
+        """Copy a git tree into the named volume without a shell pipe.
 
-    def build_seed_extract_command(self, workspace_volume: str) -> list[str]:
-        """Read archive bytes on stdin and unpack them into the named volume."""
-        return [
-            "docker", "run", "--rm", "-i",
+        `git archive` stdout is attached to `docker run -i tar` stdin. The
+        parent closes its copy of that pipe so tar sees EOF when git exits.
+        """
+        archive_cmd = ["git", "-C", str(self.repo_root), "archive", "--", commit]
+        extract_cmd = [
+            "docker", "run", "--name", container_name, "--rm", "-i",
             "-v", f"{workspace_volume}:/workspace",
             "alpine",
             "tar", "-x", "-C", "/workspace",
         ]
+        archive = subprocess.Popen(
+            archive_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+        )
+        extract: subprocess.Popen[bytes] | None = None
+        try:
+            if archive.stdout is None or archive.stderr is None:
+                raise SandboxError("git archive did not provide pipes")
+            extract = subprocess.Popen(
+                extract_cmd,
+                stdin=archive.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+            )
+            archive.stdout.close()
+            git_err: list[bytes] = []
 
-    def build_stop_command(self, sandbox_id: str, timeout: int | None = None) -> list[str]:
-        if timeout is None:
-            return ["docker", "stop", sandbox_id]
-        return ["docker", "stop", "-t", str(timeout), sandbox_id]
+            def _drain_git_stderr() -> None:
+                assert archive.stderr is not None
+                git_err.append(archive.stderr.read())
+
+            drainer = threading.Thread(target=_drain_git_stderr, daemon=True)
+            drainer.start()
+            try:
+                _out, extract_err = extract.communicate(timeout=180)
+            except subprocess.TimeoutExpired as exc:
+                extract.kill()
+                archive.kill()
+                extract.communicate()
+                raise SandboxError("timed out while seeding the workspace volume") from exc
+            finally:
+                drainer.join(timeout=30)
+            archive.wait(timeout=30)
+            if archive.returncode != 0 or extract.returncode != 0:
+                git_text = (git_err[0] if git_err else b"").decode("utf-8", "replace").strip()
+                docker_text = (extract_err or b"").decode("utf-8", "replace").strip()
+                raise SandboxError(
+                    "workspace seed failed: "
+                    f"git({archive.returncode}) {git_text}; "
+                    f"docker({extract.returncode}) {docker_text}"
+                )
+        finally:
+            if archive.poll() is None:
+                archive.kill()
+                archive.wait(timeout=10)
+            if extract is not None and extract.poll() is None:
+                extract.kill()
+                extract.wait(timeout=10)
+            try:
+                self._run_allow_missing(["docker", "rm", "-f", container_name], timeout=30)
+            except SandboxError:
+                pass
+
+    def _chown_volumes(self, workspace_volume: str, output_volume: str, container_name: str) -> None:
+        """Archive extraction runs as root. The lane user is uid 1000."""
+        try:
+            self._run(
+                [
+                    "docker", "run", "--name", container_name, "--rm",
+                    "-v", f"{workspace_volume}:/workspace",
+                    "-v", f"{output_volume}:/outputs",
+                    "alpine",
+                    "chown", "-R", "1000:1000", "/workspace", "/outputs",
+                ],
+                timeout=120,
+            )
+        finally:
+            try:
+                self._run_allow_missing(["docker", "rm", "-f", container_name], timeout=30)
+            except SandboxError:
+                pass
+
+    def _create_fresh_volume(self, volume: str) -> None:
+        if self._volume_exists(volume):
+            self._run(["docker", "volume", "rm", volume], timeout=60)
+        self._run(["docker", "volume", "create", volume], timeout=60)
+
+    def _resolve_commit(self, base_ref: str) -> str:
+        if not base_ref or any(ch in base_ref for ch in "\n\r\x00"):
+            raise ValueError("invalid base_ref")
+        result = self._run(
+            [
+                "git", "-C", str(self.repo_root),
+                "rev-parse", "--verify", "--end-of-options",
+                f"{base_ref}^{{commit}}",
+            ],
+            timeout=30,
+        )
+        commit = result.stdout.strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+            raise SandboxError(f"base_ref did not resolve to a commit: {base_ref}")
+        return commit
+
+    def _stop_for_remove(self, sandbox_id: str, *, force: bool, previous: str) -> None:
+        if not self._container_exists(sandbox_id):
+            return
+        try:
+            self._run(["docker", "stop", "-t", "10", sandbox_id], timeout=30)
+        except SandboxError:
+            if force or not self._container_running(sandbox_id):
+                return
+            restore = previous if previous in {"active", "kept", "creating"} else "failed"
+            if restore == "failed":
+                self._mark_failed(sandbox_id, "docker stop failed")
+            else:
+                self._mutate(lambda data: self._transition(data, sandbox_id, restore, extra={
+                    "error": "docker stop failed",
+                }))
+            raise
+
+    def _rollback_containers(self, names: list[str]) -> list[str]:
+        errors: list[str] = []
+        for name in reversed(names):
+            try:
+                self._run_allow_missing(["docker", "rm", "-f", name], timeout=60)
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+        return errors
+
+    def _rollback_volumes(self, volumes: list[str]) -> list[str]:
+        errors: list[str] = []
+        for volume in reversed(volumes):
+            try:
+                self._run_allow_missing(["docker", "volume", "rm", volume], timeout=60)
+            except Exception as exc:
+                errors.append(f"{volume}: {exc}")
+        return errors
+
+    def _mark_failed(self, sandbox_id: str, error: str) -> None:
+        def mutate(data: dict) -> dict | None:
+            current = self._latest(data, sandbox_id)
+            if current is None or current["status"] in {"removed", "failed"}:
+                return None
+            if "failed" not in _TRANSITIONS.get(current["status"], set()):
+                return None
+            current["status"] = "failed"
+            current["error"] = error
+            current["failed_at"] = time.time()
+            return copy.deepcopy(current)
+
+        try:
+            self._mutate(mutate)
+        except SandboxError:
+            return
+
+    def _reserve(self, data: dict, entry: dict) -> None:
+        sandboxes = data.setdefault("sandboxes", [])
+        active = [item for item in sandboxes if item.get("status") in {"creating", "active"}]
+        if len(active) >= self.max_active:
+            raise SandboxError(f"active sandbox limit reached ({self.max_active})")
+        for item in sandboxes:
+            if item.get("status") not in _LIVE_STATUSES:
+                continue
+            if item.get("task_id") == entry["task_id"]:
+                raise SandboxError(f"task {entry['task_id']} already has sandbox {item.get('container_name')}")
+            if item.get("name") == entry["name"] or item.get("container_name") == entry["container_name"]:
+                raise SandboxError(f"sandbox name {entry['name']} is already in use")
+        sandboxes.append(copy.deepcopy(entry))
+
+    def _activate(self, data: dict, entry: dict) -> dict:
+        current = self._latest(data, entry["container_name"])
+        if current is None:
+            raise SandboxConsistencyError(f"index lost sandbox {entry['container_name']} during create")
+        if current["status"] != "creating":
+            raise SandboxConsistencyError(
+                f"refusing to activate {entry['container_name']} from status {current['status']}"
+            )
+        current.update({
+            "status": "active",
+            "container_id": entry["container_id"],
+            "error": "",
+        })
+        return copy.deepcopy(current)
+
+    def _transition(self, data: dict, sandbox_id: str, status: str, extra: dict | None = None) -> dict:
+        current = self._latest(data, sandbox_id)
+        if current is None:
+            raise SandboxConsistencyError(f"index missing sandbox {sandbox_id}")
+        allowed = _TRANSITIONS.get(current["status"], set())
+        if status not in allowed:
+            raise SandboxError(f"illegal transition {current['status']} -> {status}")
+        current["status"] = status
+        if extra:
+            current.update(extra)
+        return copy.deepcopy(current)
+
+    def _latest(self, data: dict, sandbox_id: str) -> dict | None:
+        found = None
+        for item in data.get("sandboxes", []):
+            if item.get("container_name") == sandbox_id:
+                found = item
+        return found
+
+    def _load_entry(self, sandbox_id: str) -> dict:
+        def read(data: dict) -> dict:
+            current = self._latest(data, sandbox_id)
+            if current is None:
+                raise SandboxError(f"Unknown sandbox '{sandbox_id}'")
+            return copy.deepcopy(current)
+
+        return self._mutate(read, save=False)
+
+    def _mutate(self, fn: Callable[[dict], object], save: bool = True) -> object:
+        with self._locked():
+            data = self._read_index()
+            result = fn(data)
+            if save:
+                self._write_index(data)
+            return result
+
+    def _read_index(self) -> dict:
+        if not self.index_path.exists():
+            return {"sandboxes": []}
+        try:
+            raw = json.loads(self.index_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SandboxError(f"index.json is corrupt: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise SandboxError("index.json must be a JSON object")
+        raw.setdefault("sandboxes", [])
+        if not isinstance(raw["sandboxes"], list):
+            raise SandboxError("index.json sandboxes must be a list")
+        return raw
+
+    def _write_index(self, data: dict) -> None:
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(data, indent=2, ensure_ascii=False)
+        tmp = self.index_path.with_suffix(".json.tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(self.index_path)
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(self._lock_path, "a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                if handle.seek(0, os.SEEK_END) == 0:
+                    handle.write(b"\0")
+                    handle.flush()
+                handle.seek(0)
+                deadline = time.time() + 30
+                while True:
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        if time.time() >= deadline:
+                            raise SandboxError("timed out waiting for the sandbox index lock")
+                        time.sleep(0.05)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            handle.close()
+
+    def _bind_task(self, task_id: int, sandbox_name: str) -> None:
+        path = self._task_path(task_id)
+        task = self._read_task(path)
+        task["worktree"] = sandbox_name
+        if task.get("status") == "pending":
+            task["status"] = "in_progress"
+        task["updated_at"] = time.time()
+        self._write_task(path, task)
+
+    def _unbind_task(self, task_id: int, *, complete: bool) -> None:
+        path = self._task_path(task_id)
+        if not path.is_file():
+            return
+        task = self._read_task(path)
+        task["worktree"] = ""
+        task["updated_at"] = time.time()
+        if complete:
+            task["status"] = "completed"
+        self._write_task(path, task)
+
+    def _assert_task_exists(self, task_id: int) -> None:
+        if not self._task_path(task_id).is_file():
+            raise ValueError(f"Task {task_id} not found")
+
+    def _task_path(self, task_id: int) -> Path:
+        return self.tasks_dir / f"task_{task_id}.json"
+
+    def _read_task(self, path: Path) -> dict:
+        try:
+            task = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SandboxError(f"task file is corrupt: {path.name}") from exc
+        if not isinstance(task, dict):
+            raise SandboxError(f"task file must be a JSON object: {path.name}")
+        return task
+
+    def _write_task(self, path: Path, task: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(task, indent=2), encoding="utf-8")
+        tmp.replace(path)
 
     def _validate_name(self, name: str) -> None:
         if not _NAME_RE.fullmatch(name or ""):
-            raise ValueError(
-                "Invalid sandbox name. Use 1-40 chars: letters, numbers, ., _, -"
+            raise ValueError("Invalid sandbox name. Use 1-40 chars: letters, numbers, ., _, -")
+
+    def _validate_task_id(self, task_id: int) -> None:
+        if isinstance(task_id, bool) or not isinstance(task_id, int) or task_id < 1:
+            raise ValueError("task_id must be a positive integer")
+
+    def _container_exists(self, name: str) -> bool:
+        result = self._run(["docker", "inspect", "-f", "{{.Id}}", name], timeout=30, check=False)
+        return result.returncode == 0
+
+    def _container_running(self, name: str) -> bool:
+        result = self._run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            timeout=30,
+            check=False,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "true"
+
+    def _volume_exists(self, name: str) -> bool:
+        result = self._run(["docker", "volume", "inspect", name], timeout=30, check=False)
+        return result.returncode == 0
+
+    def _run(
+        self,
+        argv: list[str],
+        *,
+        timeout: float = 120,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        try:
+            result = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                shell=False,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise SandboxError(f"command timed out: {argv[0]}") from exc
+        except FileNotFoundError as exc:
+            raise SandboxError(f"executable not found: {argv[0]}") from exc
+        if check and result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise SandboxError(f"command failed ({result.returncode}): {' '.join(argv[:4])}: {detail}")
+        return result
+
+    def _run_allow_missing(
+        self,
+        argv: list[str],
+        *,
+        timeout: float = 60,
+    ) -> subprocess.CompletedProcess[str]:
+        result = self._run(argv, timeout=timeout, check=False)
+        if result.returncode == 0:
+            return result
+        detail = f"{result.stderr or ''}{result.stdout or ''}".lower()
+        if "no such" in detail:
+            return result
+        raise SandboxError(f"command failed ({result.returncode}): {' '.join(argv[:4])}: {detail.strip()}")
+
+    def _emit(self, event: str, sandbox: dict | None = None, error: str | None = None) -> None:
+        body = sandbox or {}
+        payload: dict = {
+            "event": event,
+            "ts": time.time(),
+            "sandbox": {
+                "name": body.get("name", ""),
+                "task_id": body.get("task_id"),
+                "container_name": body.get("container_name", ""),
+                "status": body.get("status", ""),
+            },
+        }
+        if error:
+            payload["error"] = error
+        try:
+            self.events_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.events_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except OSError:
+            return
