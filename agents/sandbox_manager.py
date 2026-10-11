@@ -127,7 +127,6 @@ class SandboxManager:
         self._validate_name(name)
         self._validate_task_id(task_id)
         self._assert_task_exists(task_id)
-        commit = self._resolve_commit(base_ref)
 
         now = time.time()
         container_name = f"sa-{task_id}-{name}"
@@ -142,7 +141,7 @@ class SandboxManager:
             "image": self.image,
             "workspace_volume": workspace_volume,
             "output_volume": output_volume,
-            "base_commit": commit,
+            "base_commit": "",
             "created_at": now,
             "deadline_ts": now + self.task_ttl,
             "limits": {"cpus": 1.0, "memory": "512m", "pids": 128},
@@ -154,6 +153,8 @@ class SandboxManager:
         containers: list[str] = []
         volumes: list[str] = []
         try:
+            commit = self._resolve_commit(base_ref)
+            entry["base_commit"] = commit
             helper_image = self._ensure_helper_image()
             self._ensure_sandbox_image()
             for volume in (workspace_volume, output_volume):
@@ -794,6 +795,7 @@ class SandboxManager:
         current.update({
             "status": "active",
             "container_id": entry["container_id"],
+            "base_commit": entry.get("base_commit", ""),
             "error": "",
         })
         return copy.deepcopy(current)

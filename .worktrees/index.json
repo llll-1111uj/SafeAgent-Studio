@@ -383,7 +383,7 @@
     {
       "name": "test-keep",
       "task_id": 999,
-      "status": "kept",
+      "status": "removed",
       "container_name": "sa-999-test-keep",
       "container_id": "4d31fdfba0e6b8ce0b01a31e9d11ff8145c6252a3eacca9a5e15b0c9e3d53a31",
       "image": "safeagent-sandbox:py310",
@@ -399,7 +399,194 @@
       },
       "error": "",
       "kept_at": 1791739516.1826398,
-      "volume_retain_until": 1791825916.1808817
+      "volume_retain_until": 1791825916.1808817,
+      "removed_at": 1791740161.2451456
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "6114ff888d060f512b8aee0e9239d400b127458a1ba173773c6f9b4caf2b259c",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "bc1e1aaa6e92c17523df302af08343d91909e5ad",
+      "created_at": 1791740192.6963713,
+      "deadline_ts": 1791741992.6963713,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791740205.3640738
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "3d40592e67cb82a8a3f5d8f30760e4971c9462a184f0d12d2a6da2e4f935c401",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "bc1e1aaa6e92c17523df302af08343d91909e5ad",
+      "created_at": 1791740231.5506444,
+      "deadline_ts": 1791742031.5506444,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791740244.2415895
+    },
+    {
+      "name": "test-keep",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-keep",
+      "container_id": "5d7455d0e20e9266da3d67575e4a1f0bfaa82dbd49497af070d60f4559b8cadc",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "bc1e1aaa6e92c17523df302af08343d91909e5ad",
+      "created_at": 1791740245.1961787,
+      "deadline_ts": 1791826649.9874802,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "kept_at": 1791740249.9885812,
+      "volume_retain_until": 1791826649.9874802,
+      "removed_at": 1791740250.6424453
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "9d4d415c36c48b3494fd79d7c54f19afc0177827c50fb9b5fc70026cce0768c4",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "bc1e1aaa6e92c17523df302af08343d91909e5ad",
+      "created_at": 1791740309.8720427,
+      "deadline_ts": 1791742109.8720427,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791740322.3721395
+    },
+    {
+      "name": "test-fail",
+      "task_id": 1001,
+      "status": "failed",
+      "container_name": "sa-1001-test-fail",
+      "container_id": "",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1001",
+      "output_volume": "sa-out-1001",
+      "base_commit": "",
+      "created_at": 1791740322.3969831,
+      "deadline_ts": 1791742122.3969831,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "command failed (128): git -C D:\\shixi rev-parse: fatal: Needed a single revision",
+      "failed_at": 1791740322.495398
+    },
+    {
+      "name": "test-keep",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-keep",
+      "container_id": "3f6cd3c658b9ed8a6256c4e96597bc822afb298d4222a262d20d2de70833e786",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "bc1e1aaa6e92c17523df302af08343d91909e5ad",
+      "created_at": 1791740323.3918812,
+      "deadline_ts": 1791826728.237538,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "kept_at": 1791740328.2381582,
+      "volume_retain_until": 1791826728.237538,
+      "removed_at": 1791740328.8696883
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "16b8aae18068ddf6cdc65edf97476b7953b1732b4f2f6c227597337600cdd87e",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "bc1e1aaa6e92c17523df302af08343d91909e5ad",
+      "created_at": 1791740360.040728,
+      "deadline_ts": 1791742160.040728,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791740372.509469
+    },
+    {
+      "name": "test-fail",
+      "task_id": 1001,
+      "status": "failed",
+      "container_name": "sa-1001-test-fail",
+      "container_id": "",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1001",
+      "output_volume": "sa-out-1001",
+      "base_commit": "",
+      "created_at": 1791740372.536824,
+      "deadline_ts": 1791742172.536824,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "command failed (128): git -C D:\\shixi rev-parse: fatal: Needed a single revision",
+      "failed_at": 1791740372.6471412
+    },
+    {
+      "name": "test-keep",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-keep",
+      "container_id": "806655b6cc326b96c1ca17a625bd485989ab488ee0e26395abd6ba89fecbe931",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "bc1e1aaa6e92c17523df302af08343d91909e5ad",
+      "created_at": 1791740373.5447495,
+      "deadline_ts": 1791826778.4212263,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "kept_at": 1791740378.4218278,
+      "volume_retain_until": 1791826778.4212263,
+      "removed_at": 1791740379.081275
     }
   ]
 }
