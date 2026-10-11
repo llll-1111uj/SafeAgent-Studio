@@ -1,0 +1,9 @@
+{
+  "id": 1001,
+  "subject": "rollback test",
+  "description": "",
+  "status": "pending",
+  "owner": "",
+  "worktree": "",
+  "blockedBy": []
+}

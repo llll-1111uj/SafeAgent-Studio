@@ -115,6 +115,7 @@ class SandboxManager:
         self.events_path = self.repo_root / ".worktrees" / "events.jsonl"
         self.tasks_dir = self.repo_root / ".tasks"
         self._lock_path = self.repo_root / ".worktrees" / "index.lock"
+        self.startup_reconciliation()
 
     def create_sandbox(self, name: str, task_id: int, base_ref: str = "HEAD") -> dict:
         """Create volumes, seed the workspace, start the container, and record it.
@@ -186,30 +187,11 @@ class SandboxManager:
             try:
                 self._bind_task(task_id, name)
             except Exception as bind_exc:
-                rollback_errors = self._rollback_containers(containers) + self._rollback_volumes(volumes)
-                detail = "task bind failed after container start"
-                if rollback_errors:
-                    detail = f"{detail}; rollback: {'; '.join(rollback_errors)}"
-                self._mark_failed(container_name, detail)
-                raise SandboxError(detail) from bind_exc
+                raise SandboxError("task bind failed after container start") from bind_exc
             self._emit("sandbox.create.after", saved)
             return saved
         except Exception as exc:
-            rollback_errors = self._rollback_containers(containers) + self._rollback_volumes(volumes)
-            self._mark_failed(container_name, str(exc))
-            self._emit("sandbox.create.failed", entry, error=str(exc))
-            leftover = False
-            try:
-                leftover = self._container_exists(container_name) or any(
-                    self._volume_exists(volume) for volume in volumes
-                )
-            except SandboxError:
-                leftover = True
-            if leftover or rollback_errors:
-                raise SandboxConsistencyError(
-                    f"create failed and leftover Docker resources remain for {container_name}: {exc}"
-                    + (f"; rollback: {'; '.join(rollback_errors)}" if rollback_errors else "")
-                ) from exc
+            self._fail_create(container_name, containers, volumes, exc)
             raise
 
     def execute(self, sandbox_id: str, command: str) -> ExecResult:
@@ -259,7 +241,7 @@ class SandboxManager:
         }
 
     def keep_sandbox(self, sandbox_id: str) -> dict:
-        """Stop the container, keep both volumes, and cancel the destroy lease.
+        """Stop the container, keep both volumes, and extend the lease by 24 hours.
 
         Transition: active -> kept. A second call on an already kept sandbox
         returns the current entry.
@@ -290,7 +272,7 @@ class SandboxManager:
                     sandbox_id,
                     "kept",
                     extra={
-                        "deadline_ts": 0,
+                        "deadline_ts": retain_until,
                         "kept_at": time.time(),
                         "volume_retain_until": retain_until,
                         "error": "",
@@ -308,8 +290,8 @@ class SandboxManager:
         """Stop, delete the container and both volumes, then mark the index removed.
 
         Transition: active|kept|failed|creating -> removing -> removed.
-        force=False restores the previous status when stop fails and the
-        container is still running. complete_task=True also marks the task completed.
+        docker stop -t 10 is followed by docker rm -f even when stop fails.
+        force is kept for existing callers. complete_task=True marks the task completed.
         """
         task_id, _name = parse_sandbox_id(sandbox_id)
         entry = self._load_entry(sandbox_id)
@@ -326,7 +308,8 @@ class SandboxManager:
         workspace_volume = entry["workspace_volume"]
         output_volume = entry["output_volume"]
         try:
-            self._stop_for_remove(sandbox_id, force=force, previous=previous)
+            # stop -t 10; a stop failure still continues to docker rm -f.
+            self._stop_for_remove(sandbox_id)
         except SandboxError:
             self._emit("sandbox.remove.failed", entry, error="docker stop failed")
             raise
@@ -371,6 +354,89 @@ class SandboxManager:
             self._emit("task.completed", saved)
         self._emit("sandbox.remove.after", saved)
         return saved
+
+    def startup_reconciliation(self) -> dict:
+        """Compare managed containers with index.json.
+
+        An index entry in creating, active, kept, or removing with no container
+        is marked failed. A container labeled safeagent.managed=true whose name
+        is absent from the index is removed with docker rm -f.
+        """
+        present = set(self._list_managed_containers())
+
+        def mark_missing(data: dict) -> list[str]:
+            failed: list[str] = []
+            for item in data.get("sandboxes", []):
+                name = item.get("container_name") or ""
+                if item.get("status") not in {"creating", "active", "kept", "removing"}:
+                    continue
+                if name and name not in present:
+                    item["status"] = "failed"
+                    item["error"] = "container missing at startup reconciliation"
+                    item["failed_at"] = time.time()
+                    failed.append(name)
+            return failed
+
+        failed = self._mutate(mark_missing)
+        known = self._indexed_container_names()
+        orphans = sorted(present - known)
+        removed: list[str] = []
+        for name in orphans:
+            self._run_allow_missing(["docker", "rm", "-f", name], timeout=60)
+            removed.append(name)
+        return {"failed": failed, "removed_orphans": removed}
+
+    def _list_managed_containers(self) -> list[str]:
+        result = self._run(
+            [
+                "docker", "ps", "-a",
+                "--filter", "label=safeagent.managed=true",
+                "--format", "{{.Names}}",
+            ],
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise SandboxError(f"failed to list managed containers: {detail}")
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def _indexed_container_names(self) -> set[str]:
+        def read(data: dict) -> set[str]:
+            return {
+                item.get("container_name") or ""
+                for item in data.get("sandboxes", [])
+                if item.get("container_name")
+            }
+
+        return self._mutate(read, save=False)
+
+    def _fail_create(
+        self,
+        container_name: str,
+        containers: list[str],
+        volumes: list[str],
+        exc: Exception,
+    ) -> None:
+        """Reverse cleanup: containers, then volumes, then index status failed."""
+        rollback_errors = self._rollback_containers(containers) + self._rollback_volumes(volumes)
+        marked = self._mark_failed(container_name, str(exc))
+        self._emit("sandbox.create.failed", {"container_name": container_name}, error=str(exc))
+        if not marked:
+            raise SandboxConsistencyError(
+                f"create failed for {container_name}, and index.json could not be marked failed: {exc}"
+            ) from exc
+        try:
+            leftover = self._container_exists(container_name) or any(
+                self._volume_exists(volume) for volume in volumes
+            )
+        except SandboxError:
+            leftover = True
+        if leftover or rollback_errors:
+            raise SandboxConsistencyError(
+                f"create failed and leftover Docker resources remain for {container_name}: {exc}"
+                + (f"; rollback: {'; '.join(rollback_errors)}" if rollback_errors else "")
+            ) from exc
 
     def build_run_command(
         self,
@@ -661,22 +727,10 @@ class SandboxManager:
             raise SandboxError(f"base_ref did not resolve to a commit: {base_ref}")
         return commit
 
-    def _stop_for_remove(self, sandbox_id: str, *, force: bool, previous: str) -> None:
+    def _stop_for_remove(self, sandbox_id: str) -> None:
         if not self._container_exists(sandbox_id):
             return
-        try:
-            self._run(["docker", "stop", "-t", "10", sandbox_id], timeout=30)
-        except SandboxError:
-            if force or not self._container_running(sandbox_id):
-                return
-            restore = previous if previous in {"active", "kept", "creating"} else "failed"
-            if restore == "failed":
-                self._mark_failed(sandbox_id, "docker stop failed")
-            else:
-                self._mutate(lambda data: self._transition(data, sandbox_id, restore, extra={
-                    "error": "docker stop failed",
-                }))
-            raise
+        self._run(["docker", "stop", "-t", "10", sandbox_id], timeout=30, check=False)
 
     def _rollback_containers(self, names: list[str]) -> list[str]:
         errors: list[str] = []
@@ -696,22 +750,24 @@ class SandboxManager:
                 errors.append(f"{volume}: {exc}")
         return errors
 
-    def _mark_failed(self, sandbox_id: str, error: str) -> None:
-        def mutate(data: dict) -> dict | None:
+    def _mark_failed(self, sandbox_id: str, error: str) -> bool:
+        def mutate(data: dict) -> bool:
             current = self._latest(data, sandbox_id)
-            if current is None or current["status"] in {"removed", "failed"}:
-                return None
+            if current is None:
+                return False
+            if current["status"] in {"removed", "failed"}:
+                return True
             if "failed" not in _TRANSITIONS.get(current["status"], set()):
-                return None
+                return False
             current["status"] = "failed"
             current["error"] = error
             current["failed_at"] = time.time()
-            return copy.deepcopy(current)
+            return True
 
         try:
-            self._mutate(mutate)
+            return self._mutate(mutate)
         except SandboxError:
-            return
+            return False
 
     def _reserve(self, data: dict, entry: dict) -> None:
         sandboxes = data.setdefault("sandboxes", [])
@@ -797,7 +853,19 @@ class SandboxManager:
         payload = json.dumps(data, indent=2, ensure_ascii=False)
         tmp = self.index_path.with_suffix(".json.tmp")
         tmp.write_text(payload, encoding="utf-8")
-        tmp.replace(self.index_path)
+        last_error: PermissionError | None = None
+        for attempt in range(5):
+            try:
+                os.replace(tmp, self.index_path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                if attempt < 4:
+                    time.sleep(0.1)
+        raise SandboxConsistencyError(
+            f"failed to replace {self.index_path} after 5 attempts. "
+            "Another program may be locking the index file."
+        ) from last_error
 
     @contextmanager
     def _locked(self) -> Iterator[None]:

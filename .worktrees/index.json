@@ -79,6 +79,327 @@
       },
       "error": "",
       "removed_at": 1791733525.561196
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "4dee98ab28a2423477581ce2122d188796f23ed81a65a472e8507019fb77ea62",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791734528.539879,
+      "deadline_ts": 1791736328.539879,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791734546.8548014
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "0675a67297a36f3534b3119ea092638929610a70acc8b13fedd5066ccb991752",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791735928.2465785,
+      "deadline_ts": 1791737728.2465785,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791735940.9234576
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "4fd8a8ccebb42e7f035b05b23803e84c82d24868c60c4e7cbe6fbae46d0bc4b6",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791736074.7394946,
+      "deadline_ts": 1791737874.7394946,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791736087.3646953
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "df9cb452143b2efd92d9971bb3f31b0ca70d6788d3f050106a61a5d3fd944dec",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791736268.9221647,
+      "deadline_ts": 1791738068.9221647,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791736281.4882908
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "58ddb2d6d6d96db75cd8003384b9099b96e951c4fedb2eb1677d052ef0bc6549",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791736528.808096,
+      "deadline_ts": 1791738328.808096,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791736541.3428514
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "8bce10b79ca54bc4fcbc5690546b2e83257f65a0b72d1b46f2187e6392ecc8c8",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791736597.7990127,
+      "deadline_ts": 1791738397.7990127,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791736610.3736734
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "12f29737cacdeabc8ff38f4dddaf0e655a59ab7e64bf11db0b15ba00ab38c8fe",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791736732.3865974,
+      "deadline_ts": 1791738532.3865974,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791736744.9413745
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "5e22d555b03cca94ea7835717cd3dc7b5489bcd3187bd99697c552e3ccd192c8",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791737830.7446835,
+      "deadline_ts": 1791739630.7446835,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791737843.3488066
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "3fd0da151cd9f5ab04286edd5fe7e32487f0d918cfc277c8452c73b142177e4e",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791738141.6457753,
+      "deadline_ts": 1791739941.6457753,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791738154.323958
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "96e7c4f03b4493f48ea3b7894530cd4e0059664a5ed71c53224830387e065597",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791738296.7087605,
+      "deadline_ts": 1791740096.7087605,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791738309.2779195
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "2df40f2e1290dfb3d6f8ad36e8c8180286ee612b386d580758727a8c0dc2f95d",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791738474.2532716,
+      "deadline_ts": 1791740274.2532716,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791738486.7835934
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "9daa3ba69fb19e104803d882542731dc5003770a3d535d2bf11a30d0f94710b6",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791739004.5849223,
+      "deadline_ts": 1791740804.5849223,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791739017.391151
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "e8d69cd195a0a92964528f8a3eab6835c09dfb6c5c0b2d568a0d7399b55aadb0",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791739209.358835,
+      "deadline_ts": 1791741009.358835,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791739222.2754312
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "6bf05637a57d9903587fad409171548f84a25a541df546e90be8cf08e4746911",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791739437.5421252,
+      "deadline_ts": 1791741237.5421252,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791739450.1816216
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "287105fd293f499b9e1e533f780574b47b6a65122bc5e13b329f2537f01ebae7",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791739497.8730764,
+      "deadline_ts": 1791741297.8730764,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791739510.3875554
+    },
+    {
+      "name": "test-keep",
+      "task_id": 999,
+      "status": "kept",
+      "container_name": "sa-999-test-keep",
+      "container_id": "4d31fdfba0e6b8ce0b01a31e9d11ff8145c6252a3eacca9a5e15b0c9e3d53a31",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "1feedb6495e1f3a53a628ed198f4c5b8efeef096",
+      "created_at": 1791739511.4236176,
+      "deadline_ts": 1791825916.1808817,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "kept_at": 1791739516.1826398,
+      "volume_retain_until": 1791825916.1808817
     }
   ]
 }
