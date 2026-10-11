@@ -20,10 +20,20 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Iterator, TypedDict
+from typing import Callable, Iterator, TypeVar, TypedDict
+
+
 
 
 DEFAULT_IMAGE = "safeagent-sandbox:py310"
+HELPER_IMAGE = "alpine:latest"
+# Docker Engine registry-mirrors. USTC and NetEase are the Docker Desktop example;
+# neither host resolves here, so DaoCloud is tried first.
+REGISTRY_MIRRORS = (
+    "https://docker.m.daocloud.io",
+    "https://docker.mirrors.ustc.edu.cn",
+    "https://hub-mirror.c.163.com",
+)
 EXEC_TIMEOUT_SECONDS = 300
 KILL_GRACE_SECONDS = 10
 TASK_TTL_SECONDS = 30 * 60
@@ -31,6 +41,7 @@ KEEP_TTL_SECONDS = 24 * 60 * 60
 OUTPUT_LIMIT = 50_000
 MAX_ACTIVE = 4
 TIMEOUT_MESSAGE = "Error: Timeout (300s)"
+_T = TypeVar("_T")
 
 _NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,40}")
 _SANDBOX_ID_RE = re.compile(r"^sa-(\d+)-([A-Za-z0-9._-]{1,40})$")
@@ -142,15 +153,17 @@ class SandboxManager:
         containers: list[str] = []
         volumes: list[str] = []
         try:
+            helper_image = self._ensure_helper_image()
+            self._ensure_sandbox_image()
             for volume in (workspace_volume, output_volume):
                 volumes.append(volume)
                 self._create_fresh_volume(volume)
             seed_name = f"{container_name}-seed"
             containers.append(seed_name)
-            self._seed_workspace(workspace_volume, commit, seed_name)
+            self._seed_workspace(workspace_volume, commit, seed_name, helper_image)
             chown_name = f"{container_name}-chown"
             containers.append(chown_name)
-            self._chown_volumes(workspace_volume, output_volume, chown_name)
+            self._chown_volumes(workspace_volume, output_volume, chown_name, helper_image)
             # One-shot helpers use --rm. Drop them from the rollback list once they exit.
             containers.clear()
             containers.append(container_name)
@@ -457,7 +470,83 @@ class SandboxManager:
             check=False,
         )
 
-    def _seed_workspace(self, workspace_volume: str, commit: str, container_name: str) -> None:
+    def _ensure_helper_image(self) -> str:
+        """Pull alpine through a registry mirror before seeding."""
+        return self._pull_via_mirrors("library/alpine:latest", HELPER_IMAGE)
+
+    def _ensure_sandbox_image(self) -> None:
+        """Build safeagent-sandbox:py310 locally when it is not already present.
+
+        This name is not on Docker Hub. docker run would otherwise try
+        registry-1.docker.io and time out. The Python base image is pulled
+        through the same registry mirrors, then git and a uid 1000 user are
+        installed on top.
+        """
+        if self._image_exists(self.image):
+            return
+        base = self._pull_via_mirrors("library/python:3.10-slim-bookworm", "python:3.10-slim-bookworm")
+        dockerfile = Path(__file__).resolve().parent / "docker" / "Dockerfile"
+        if not dockerfile.is_file():
+            raise SandboxError(f"sandbox Dockerfile not found: {dockerfile}")
+        self._run(
+            [
+                "docker", "build",
+                "-f", str(dockerfile),
+                "-t", self.image,
+                "--build-arg", f"BASE_IMAGE={base}",
+                str(dockerfile.parent),
+            ],
+            timeout=600,
+        )
+
+    def _pull_via_mirrors(self, repository: str, local_name: str) -> str:
+        """Pull repository from REGISTRY_MIRRORS and tag it local_name."""
+        if self._image_exists(local_name):
+            return local_name
+        errors: list[str] = []
+        for mirror in REGISTRY_MIRRORS:
+            image = self._mirror_image(mirror, repository)
+            if self._image_exists(image):
+                if image != local_name:
+                    self._run(["docker", "tag", image, local_name], timeout=30)
+                return local_name
+            result = self._run(["docker", "pull", image], timeout=600, check=False)
+            if result.returncode == 0:
+                if image != local_name:
+                    self._run(["docker", "tag", image, local_name], timeout=30)
+                return local_name
+            errors.append(f"{image}: {self._last_line(result.stderr or result.stdout)}")
+        result = self._run(["docker", "pull", local_name], timeout=600, check=False)
+        if result.returncode == 0:
+            return local_name
+        errors.append(f"{local_name}: {self._last_line(result.stderr or result.stdout)}")
+        raise SandboxError(
+            f"failed to pull {local_name} via registry mirrors: " + " | ".join(errors)
+        )
+
+    def _mirror_image(self, mirror: str, name: str = "library/alpine:latest") -> str:
+        host = mirror
+        for prefix in ("https://", "http://"):
+            if host.startswith(prefix):
+                host = host[len(prefix):]
+        return f"{host.rstrip('/')}/{name}"
+
+    def _image_exists(self, image: str) -> bool:
+        result = self._run(["docker", "image", "inspect", image], timeout=30, check=False)
+        return result.returncode == 0
+
+    @staticmethod
+    def _last_line(text: str | None) -> str:
+        lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+        return lines[-1] if lines else "pull failed"
+
+    def _seed_workspace(
+        self,
+        workspace_volume: str,
+        commit: str,
+        container_name: str,
+        helper_image: str,
+    ) -> None:
         """Copy a git tree into the named volume without a shell pipe.
 
         `git archive` stdout is attached to `docker run -i tar` stdin. The
@@ -467,7 +556,7 @@ class SandboxManager:
         extract_cmd = [
             "docker", "run", "--name", container_name, "--rm", "-i",
             "-v", f"{workspace_volume}:/workspace",
-            "alpine",
+            helper_image,
             "tar", "-x", "-C", "/workspace",
         ]
         archive = subprocess.Popen(
@@ -526,7 +615,13 @@ class SandboxManager:
             except SandboxError:
                 pass
 
-    def _chown_volumes(self, workspace_volume: str, output_volume: str, container_name: str) -> None:
+    def _chown_volumes(
+        self,
+        workspace_volume: str,
+        output_volume: str,
+        container_name: str,
+        helper_image: str,
+    ) -> None:
         """Archive extraction runs as root. The lane user is uid 1000."""
         try:
             self._run(
@@ -534,7 +629,7 @@ class SandboxManager:
                     "docker", "run", "--name", container_name, "--rm",
                     "-v", f"{workspace_volume}:/workspace",
                     "-v", f"{output_volume}:/outputs",
-                    "alpine",
+                    helper_image,
                     "chown", "-R", "1000:1000", "/workspace", "/outputs",
                 ],
                 timeout=120,
@@ -675,7 +770,7 @@ class SandboxManager:
 
         return self._mutate(read, save=False)
 
-    def _mutate(self, fn: Callable[[dict], object], save: bool = True) -> object:
+    def _mutate(self, fn: Callable[[dict], _T], save: bool = True) -> _T:
         with self._locked():
             data = self._read_index()
             result = fn(data)
@@ -726,7 +821,9 @@ class SandboxManager:
                         time.sleep(0.05)
             else:
                 import fcntl
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                # Windows typeshed omits these Unix-only attributes.
+                flock = getattr(fcntl, "flock")
+                flock(handle.fileno(), getattr(fcntl, "LOCK_EX"))
             yield
         finally:
             try:
@@ -736,7 +833,8 @@ class SandboxManager:
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
                 else:
                     import fcntl
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    flock = getattr(fcntl, "flock")
+                    flock(handle.fileno(), getattr(fcntl, "LOCK_UN"))
             except OSError:
                 pass
             handle.close()

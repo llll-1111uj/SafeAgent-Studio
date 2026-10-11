@@ -1,0 +1,84 @@
+{
+  "sandboxes": [
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "failed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "7d9820e8e3db63c6a1f032768f5ed90c42728482",
+      "created_at": 1791479564.1401722,
+      "deadline_ts": 1791481364.1401722,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "executable not found: docker",
+      "failed_at": 1791479564.1630514
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "failed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "7d9820e8e3db63c6a1f032768f5ed90c42728482",
+      "created_at": 1791732517.459,
+      "deadline_ts": 1791734317.459,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "workspace seed failed: git(141) ; docker(125) Unable to find image 'alpine:latest' locally\ndocker: Error response from daemon: failed to resolve reference \"docker.io/library/alpine:latest\": failed to do request: Head \"https://registry-1.docker.io/v2/library/alpine/manifests/latest\": dialing registry-1.docker.io:443 container via direct connection because Docker Desktop has no HTTPS proxy: connecting to registry-1.docker.io:443: dial tcp [2a03:2880:f10d:83:face:b00c:0:25de]:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.\n\nRun 'docker run --help' for more information",
+      "failed_at": 1791732545.7034588
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "failed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "7d9820e8e3db63c6a1f032768f5ed90c42728482",
+      "created_at": 1791732967.6152365,
+      "deadline_ts": 1791734767.6152365,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "command failed (125): docker run -d --name: Unable to find image 'safeagent-sandbox:py310' locally\ndocker: Error response from daemon: failed to resolve reference \"docker.io/library/safeagent-sandbox:py310\": failed to do request: Head \"https://registry-1.docker.io/v2/library/safeagent-sandbox/manifests/py310\": dialing registry-1.docker.io:443 container via direct connection because Docker Desktop has no HTTPS proxy: connecting to registry-1.docker.io:443: dial tcp [2a03:2880:f129:83:face:b00c:0:25de]:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.\n\nRun 'docker run --help' for more information",
+      "failed_at": 1791732990.805674
+    },
+    {
+      "name": "test-sandbox",
+      "task_id": 999,
+      "status": "removed",
+      "container_name": "sa-999-test-sandbox",
+      "container_id": "3a8e2aff2625b487d423091c12c547474bdd842436f38fcd8c0ca8d4d978579c",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-999",
+      "output_volume": "sa-out-999",
+      "base_commit": "7d9820e8e3db63c6a1f032768f5ed90c42728482",
+      "created_at": 1791733512.8461838,
+      "deadline_ts": 1791735312.8461838,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791733525.561196
+    }
+  ]
+}
