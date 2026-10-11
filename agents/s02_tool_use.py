@@ -19,8 +19,10 @@ Key insight: "The loop didn't change at all. I just added tools."
 """
 
 import base64
+import contextvars
 import json
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -45,6 +47,11 @@ SYSTEM = (
 )
 
 _sandbox = None
+_task_id = contextvars.ContextVar("safeagent_task_id", default=None)
+_approval_waiter = None
+_status_publisher = None
+_WIN_PATH = re.compile(r"[A-Za-z]:\\[^\s\"']+")
+_UNIX_PATH = re.compile(r"(?<![A-Za-z0-9_])/(?:[\w.-]+/)+[\w.-]*")
 
 FILE_OPS = r"""
 import base64, pathlib, sys
@@ -90,6 +97,87 @@ def get_sandbox() -> SandboxManager:
     return _sandbox
 
 
+def set_task_id(task_id: int):
+    """Bind task_id to this thread. Call this inside the agent thread."""
+    return _task_id.set(task_id)
+
+
+def reset_task_id(token) -> None:
+    _task_id.reset(token)
+
+
+def set_approval_waiter(waiter) -> None:
+    """waiter(task_id, action, args) -> True, False, or None on timeout."""
+    global _approval_waiter
+    _approval_waiter = waiter
+
+
+def set_status_publisher(publisher) -> None:
+    """publisher(payload: dict) -> None. Wired to WebSocket by main."""
+    global _status_publisher
+    _status_publisher = publisher
+
+
+def tool_error(exc: BaseException) -> str:
+    """Error text safe to send back as a model tool_result."""
+    text = str(exc)
+    secrets = []
+    try:
+        secrets.append(str(WORKDIR))
+        secrets.append(str(WORKDIR.resolve()))
+    except OSError:
+        pass
+    try:
+        secrets.append(str(Path.home()))
+    except OSError:
+        pass
+    for secret in sorted(set(secrets), key=len, reverse=True):
+        if secret:
+            text = text.replace(secret, "[workspace]")
+    text = _WIN_PATH.sub("[path]", text)
+    text = _UNIX_PATH.sub("[path]", text)
+    text = re.sub(r"\[workspace\][\\/][^\s\"']*", "[workspace]", text)
+    text = " ".join(text.split())
+    if not text:
+        text = "tool failed"
+    if text.startswith("Error:"):
+        return text
+    return "Error: " + text
+
+
+def publish_status(status: str, message: str, **extra) -> None:
+    publisher = _status_publisher
+    task_id = _task_id.get()
+    if publisher is None or task_id is None:
+        return
+    payload = {"status": status, "task_id": task_id, "message": message}
+    payload.update(extra)
+    try:
+        publisher(payload)
+    except Exception:
+        return
+
+
+def wait_for_approval(action: str, args_preview: str):
+    """Return an error string to block the tool, or None to run it.
+
+    With no waiter registered, CLI and tests run the tool directly.
+    """
+    waiter = _approval_waiter
+    task_id = _task_id.get()
+    if waiter is None or task_id is None:
+        return None
+    try:
+        decision = waiter(task_id, action, args_preview)
+    except Exception as exc:
+        return tool_error(exc)
+    if decision is None:
+        return "Error: %s approval timed out" % action
+    if not decision:
+        return "Error: %s rejected" % action
+    return None
+
+
 def require_bound_sandbox() -> str:
     """Return the active container name for the single in-progress bound task."""
     tasks_dir = WORKDIR / ".tasks"
@@ -102,7 +190,14 @@ def require_bound_sandbox() -> str:
                 continue
             if isinstance(task, dict) and str(task.get("worktree") or "").strip():
                 bound.append(task)
-    current = [task for task in bound if task.get("status") == "in_progress"]
+    wanted = _task_id.get()
+    if wanted is not None:
+        current = [
+            task for task in bound
+            if task.get("id") == wanted and task.get("status") == "in_progress"
+        ]
+    else:
+        current = [task for task in bound if task.get("status") == "in_progress"]
     if len(current) != 1:
         raise RuntimeError("Error: current task has no bound sandbox")
     task = current[0]
@@ -146,11 +241,11 @@ def run_in_sandbox(command: str) -> str:
     try:
         sandbox_id = require_bound_sandbox()
     except RuntimeError as exc:
-        return str(exc)
+        return tool_error(exc)
     try:
         result = get_sandbox().execute(sandbox_id, command)
     except (SandboxError, ValueError) as exc:
-        return f"Error: {exc}"
+        return tool_error(exc)
     return format_exec(result)
 
 
@@ -159,18 +254,35 @@ def run_file_op(op: str, path: str, *args: str) -> str:
         rel = workspace_rel(path)
         sandbox_id = require_bound_sandbox()
     except (RuntimeError, ValueError) as exc:
-        return f"Error: {exc}" if not str(exc).startswith("Error:") else str(exc)
+        return tool_error(exc)
     command = "python -c " + shlex.quote(FILE_OPS) + " " + shlex.quote(op) + " " + shlex.quote(rel)
     for arg in args:
         command += " " + shlex.quote(arg)
     try:
         result = get_sandbox().execute(sandbox_id, command)
     except (SandboxError, ValueError) as exc:
-        return f"Error: {exc}"
+        return tool_error(exc)
     return format_exec(result)
 
 
+def _ready_for_tool(path: str = "") -> str:
+    """Return an error string when the tool must not run, else ""."""
+    try:
+        if path:
+            workspace_rel(path)
+        require_bound_sandbox()
+    except (RuntimeError, ValueError) as exc:
+        return tool_error(exc)
+    return ""
+
+
 def run_bash(command: str) -> str:
+    denied = _ready_for_tool()
+    if denied:
+        return denied
+    denied = wait_for_approval("bash", command)
+    if denied:
+        return denied
     return run_in_sandbox(command)
 
 
@@ -180,11 +292,24 @@ def run_read(path: str, limit: int = None) -> str:
 
 
 def run_write(path: str, content: str) -> str:
+    denied = _ready_for_tool(path)
+    if denied:
+        return denied
+    preview = content if len(content) <= 200 else content[:200] + " ... (%d bytes)" % len(content)
+    denied = wait_for_approval("write_file", path + "\n" + preview)
+    if denied:
+        return denied
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
     return run_file_op("write", path, encoded)
 
 
 def run_edit(path: str, old_text: str, new_text: str) -> str:
+    denied = _ready_for_tool(path)
+    if denied:
+        return denied
+    denied = wait_for_approval("edit_file", path)
+    if denied:
+        return denied
     old_b64 = base64.b64encode(old_text.encode("utf-8")).decode("ascii")
     new_b64 = base64.b64encode(new_text.encode("utf-8")).decode("ascii")
     return run_file_op("edit", path, old_b64, new_b64)
@@ -211,22 +336,33 @@ TOOLS = [
 
 
 def agent_loop(messages: list):
-    while True:
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
-            tools=TOOLS, max_tokens=8000,
-        )
-        messages.append({"role": "assistant", "content": response.content})
-        if response.stop_reason != "tool_use":
-            return
-        results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                handler = TOOL_HANDLERS.get(block.name)
-                output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
-                print(f"> {block.name}: {output[:200]}")
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
-        messages.append({"role": "user", "content": results})
+    try:
+        while True:
+            publish_status("thinking", "model request")
+            response = client.messages.create(
+                model=MODEL, system=SYSTEM, messages=messages,
+                tools=TOOLS, max_tokens=8000,
+            )
+            messages.append({"role": "assistant", "content": response.content})
+            if response.stop_reason != "tool_use":
+                publish_status("completed", "task finished")
+                return
+            results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    publish_status("tool_call", block.name, action=block.name)
+                    handler = TOOL_HANDLERS.get(block.name)
+                    try:
+                        output = handler(**block.input) if handler else "Unknown tool: %s" % block.name
+                    except Exception as exc:
+                        output = tool_error(exc)
+                    publish_status("tool_result", block.name, action=block.name)
+                    print("> %s: %s" % (block.name, output[:200]))
+                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+            messages.append({"role": "user", "content": results})
+    except Exception as exc:
+        publish_status("error", tool_error(exc))
+        raise
 
 
 if __name__ == "__main__":
