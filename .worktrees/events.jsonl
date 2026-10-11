@@ -115,3 +115,14 @@
 {"event": "sandbox.keep", "ts": 1791740378.4241402, "sandbox": {"name": "test-keep", "task_id": 999, "container_name": "sa-999-test-keep", "status": "kept"}}
 {"event": "sandbox.remove.before", "ts": 1791740378.5704062, "sandbox": {"name": "test-keep", "task_id": 999, "container_name": "sa-999-test-keep", "status": "kept"}}
 {"event": "sandbox.remove.after", "ts": 1791740379.0967052, "sandbox": {"name": "test-keep", "task_id": 999, "container_name": "sa-999-test-keep", "status": "removed"}}
+{"event": "sandbox.create.before", "ts": 1791741503.6942253, "sandbox": {"name": "tool-test", "task_id": 888, "container_name": "sa-888-tool-test", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791741505.5152, "sandbox": {"name": "tool-test", "task_id": 888, "container_name": "sa-888-tool-test", "status": "active"}}
+{"event": "sandbox.remove.before", "ts": 1791741506.5092452, "sandbox": {"name": "tool-test", "task_id": 888, "container_name": "sa-888-tool-test", "status": "active"}}
+{"event": "sandbox.remove.after", "ts": 1791741517.1144185, "sandbox": {"name": "tool-test", "task_id": 888, "container_name": "sa-888-tool-test", "status": "removed"}}
+{"event": "sandbox.create.before", "ts": 1791741563.8151064, "sandbox": {"name": "tool-test", "task_id": 888, "container_name": "sa-888-tool-test", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791741565.4912972, "sandbox": {"name": "tool-test", "task_id": 888, "container_name": "sa-888-tool-test", "status": "active"}}
+{"event": "sandbox.remove.before", "ts": 1791741566.3576574, "sandbox": {"name": "tool-test", "task_id": 888, "container_name": "sa-888-tool-test", "status": "active"}}
+{"event": "sandbox.remove.after", "ts": 1791741576.964013, "sandbox": {"name": "tool-test", "task_id": 888, "container_name": "sa-888-tool-test", "status": "removed"}}
+{"event": "sandbox.create.before", "ts": 1791741843.7246697, "sandbox": {"name": "reaper-test", "task_id": 888, "container_name": "sa-888-reaper-test", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791741845.6308203, "sandbox": {"name": "reaper-test", "task_id": 888, "container_name": "sa-888-reaper-test", "status": "active"}}
+{"event": "sandbox.timeout", "ts": 1791741845.677088, "sandbox": {"name": "reaper-test", "task_id": 888, "container_name": "sa-888-reaper-test", "status": "active"}}

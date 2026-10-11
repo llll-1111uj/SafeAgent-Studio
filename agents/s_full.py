@@ -708,28 +708,48 @@ def agent_loop(messages: list):
 
 # === SECTION: repl ===
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from reaper import SandboxReaper
+    from sandbox_manager import SandboxError
+
+    reaper = None
+    try:
+        reaper = SandboxReaper(repo_root=WORKDIR)
+        print("[sandbox] reconciliation", reaper.startup_reconciliation())
+        reaper.start()
+        print("[sandbox] reaper started, interval=5s, source=index deadline_ts")
+    except SandboxError as exc:
+        print(f"[sandbox] reaper not started: {exc}")
+        reaper = None
+
     history = []
-    while True:
-        try:
-            query = input("\033[36ms_full >> \033[0m")
-        except (EOFError, KeyboardInterrupt):
-            break
-        if query.strip().lower() in ("q", "exit", ""):
-            break
-        if query.strip() == "/compact":
-            if history:
-                print("[manual compact via /compact]")
-                history[:] = auto_compact(history)
-            continue
-        if query.strip() == "/tasks":
-            print(TASK_MGR.list_all())
-            continue
-        if query.strip() == "/team":
-            print(TEAM.list_all())
-            continue
-        if query.strip() == "/inbox":
-            print(json.dumps(BUS.read_inbox("lead"), indent=2))
-            continue
-        history.append({"role": "user", "content": query})
-        agent_loop(history)
-        print()
+    try:
+        while True:
+            try:
+                query = input("\033[36ms_full >> \033[0m")
+            except (EOFError, KeyboardInterrupt):
+                break
+            if query.strip().lower() in ("q", "exit", ""):
+                break
+            if query.strip() == "/compact":
+                if history:
+                    print("[manual compact via /compact]")
+                    history[:] = auto_compact(history)
+                continue
+            if query.strip() == "/tasks":
+                print(TASK_MGR.list_all())
+                continue
+            if query.strip() == "/team":
+                print(TEAM.list_all())
+                continue
+            if query.strip() == "/inbox":
+                print(json.dumps(BUS.read_inbox("lead"), indent=2))
+                continue
+            history.append({"role": "user", "content": query})
+            agent_loop(history)
+            print()
+    finally:
+        if reaper is not None:
+            reaper.stop()

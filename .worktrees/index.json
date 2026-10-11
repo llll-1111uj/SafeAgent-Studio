@@ -587,6 +587,66 @@
       "kept_at": 1791740378.4218278,
       "volume_retain_until": 1791826778.4212263,
       "removed_at": 1791740379.081275
+    },
+    {
+      "name": "tool-test",
+      "task_id": 888,
+      "status": "removed",
+      "container_name": "sa-888-tool-test",
+      "container_id": "dc315cf3efc65cad890e03820ffa52397da5afee57e66f2d5aac720e75dc2a39",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-888",
+      "output_volume": "sa-out-888",
+      "base_commit": "818004d018f56b5e480ce70b9bf7a11b2e1ebc9d",
+      "created_at": 1791741503.6942253,
+      "deadline_ts": 1791743303.6942253,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791741517.1104066
+    },
+    {
+      "name": "tool-test",
+      "task_id": 888,
+      "status": "removed",
+      "container_name": "sa-888-tool-test",
+      "container_id": "a20772768e53ea788da2f83eab9354e30e3405fa458b813e2f3b71b64b725994",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-888",
+      "output_volume": "sa-out-888",
+      "base_commit": "818004d018f56b5e480ce70b9bf7a11b2e1ebc9d",
+      "created_at": 1791741563.8151064,
+      "deadline_ts": 1791743363.8151064,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791741576.9610898
+    },
+    {
+      "name": "reaper-test",
+      "task_id": 888,
+      "status": "timed_out",
+      "container_name": "sa-888-reaper-test",
+      "container_id": "d49c7810b33ee1d6403106e8cb0219a28a70c1a117ef642d7d9fba682e9201e1",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-888",
+      "output_volume": "sa-out-888",
+      "base_commit": "818004d018f56b5e480ce70b9bf7a11b2e1ebc9d",
+      "created_at": 1791741843.7246697,
+      "deadline_ts": 1791741844.6522157,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "timed_out_at": 1791741856.2856605
     }
   ]
 }

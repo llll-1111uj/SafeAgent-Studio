@@ -48,7 +48,7 @@ _SANDBOX_ID_RE = re.compile(r"^sa-(\d+)-([A-Za-z0-9._-]{1,40})$")
 _LIVE_STATUSES = {"creating", "active", "kept", "removing"}
 _TRANSITIONS = {
     "creating": {"active", "failed", "removing"},
-    "active": {"kept", "removing", "failed"},
+    "active": {"kept", "removing", "failed", "timed_out"},
     "kept": {"removing", "failed"},
     "removing": {"removed", "failed", "active", "kept"},
     "failed": {"removing"},
@@ -254,7 +254,6 @@ class SandboxManager:
         if entry["status"] != "active":
             raise SandboxError(f"cannot keep sandbox from status {entry['status']}")
 
-        self._emit("sandbox.keep.before", entry)
         try:
             self._run(["docker", "stop", sandbox_id], timeout=60)
         except SandboxError as exc:
@@ -354,6 +353,89 @@ class SandboxManager:
         if complete_task:
             self._emit("task.completed", saved)
         self._emit("sandbox.remove.after", saved)
+        return saved
+
+    def list_expired(self, now: float | None = None) -> list[dict]:
+        """Active lanes whose index deadline_ts is already due.
+
+        The deadline lives in index.json, so a restarted process sees the same
+        leases. Entries with no numeric deadline are left alone.
+        """
+        moment = time.time() if now is None else now
+
+        def read(data: dict) -> list[dict]:
+            due: list[dict] = []
+            for item in data.get("sandboxes", []):
+                if item.get("status") != "active":
+                    continue
+                deadline = item.get("deadline_ts")
+                if isinstance(deadline, bool) or not isinstance(deadline, (int, float)):
+                    continue
+                if deadline <= moment:
+                    due.append(copy.deepcopy(item))
+            return due
+
+        return self._mutate(read, save=False)
+
+    def timeout_sandbox(self, sandbox_id: str) -> dict:
+        """Destroy one lane because its index deadline has passed.
+
+        Order: sandbox.timeout, docker stop -t 10, docker rm -f, delete both
+        volumes, mark the index timed_out, unbind the task. Task status stays
+        in_progress.
+        """
+        task_id, _name = parse_sandbox_id(sandbox_id)
+        entry = self._load_entry(sandbox_id)
+        if entry["status"] == "timed_out":
+            return entry
+        if entry["status"] != "active":
+            raise SandboxError(f"cannot timeout sandbox from status {entry['status']}")
+        deadline = entry.get("deadline_ts")
+        if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or deadline > time.time():
+            return entry
+
+        self._emit("sandbox.timeout", entry)
+        workspace_volume = entry["workspace_volume"]
+        output_volume = entry["output_volume"]
+        try:
+            self._stop_for_remove(sandbox_id)
+            self._run_allow_missing(["docker", "rm", "-f", sandbox_id], timeout=60)
+            self._run_allow_missing(["docker", "volume", "rm", workspace_volume], timeout=60)
+            self._run_allow_missing(["docker", "volume", "rm", output_volume], timeout=60)
+        except Exception as exc:
+            self._mark_failed(sandbox_id, str(exc))
+            raise
+
+        if (
+            self._container_exists(sandbox_id)
+            or self._volume_exists(workspace_volume)
+            or self._volume_exists(output_volume)
+        ):
+            self._mark_failed(sandbox_id, "timeout finished but Docker resources are still present")
+            raise SandboxConsistencyError(
+                f"timeout of {sandbox_id} left Docker resources behind; index marked failed"
+            )
+
+        try:
+            saved = self._mutate(
+                lambda data: self._transition(
+                    data,
+                    sandbox_id,
+                    "timed_out",
+                    extra={"timed_out_at": time.time(), "error": ""},
+                )
+            )
+        except Exception as exc:
+            raise SandboxConsistencyError(
+                f"Docker resources for {sandbox_id} are gone, but index.json could not be marked timed_out: {exc}"
+            ) from exc
+
+        try:
+            self._unbind_task(task_id, complete=False)
+        except Exception as exc:
+            raise SandboxConsistencyError(
+                f"sandbox {sandbox_id} timed out, but task {task_id} could not be unbound: {exc}"
+            ) from exc
         return saved
 
     def startup_reconciliation(self) -> dict:
