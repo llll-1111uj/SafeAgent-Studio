@@ -553,7 +553,8 @@ TEAM = TeammateManager(BUS, TASK_MGR)
 SYSTEM = f"""You are a coding agent at {WORKDIR}. Use tools to solve tasks.
 Prefer task_create/task_update/task_list for multi-step work. Use TodoWrite for short checklists.
 Use task for subagent delegation. Use load_skill for specialized knowledge.
-Skills: {SKILLS.descriptions()}"""
+Skills: {SKILLS.descriptions()}
+你处于断网沙箱，禁止尝试任何网络安装（pip install, apt-get）或外网下载。如果遇到缺失依赖，请使用纯 Python 或本地已有库降级实现。"""
 
 
 # === SECTION: shutdown_protocol (s10) ===

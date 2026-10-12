@@ -43,7 +43,9 @@ SYSTEM = (
     f"You are a coding agent at {WORKDIR}. "
     "bash, read_file, write_file, and edit_file run inside the bound sandbox "
     "at /workspace. Refuse them when the current task has no active sandbox. "
-    "Act, don't explain."
+    "Act, don't explain. "
+    "你处于断网沙箱，禁止尝试任何网络安装（pip install, apt-get）或外网下载。"
+    "如果遇到缺失依赖，请使用纯 Python 或本地已有库降级实现。"
 )
 
 _sandbox = None
@@ -276,13 +278,149 @@ def _ready_for_tool(path: str = "") -> str:
     return ""
 
 
+_READONLY_BINARIES = frozenset({
+    "pwd", "ls", "cat", "head", "tail", "grep", "find",
+    "getent", "env", "echo",
+})
+_VERSION_BINARIES = frozenset({"python3", "python", "pip", "pip3"})
+_FIND_WRITERS = frozenset({
+    "-exec", "-execdir", "-ok", "-okdir", "-delete",
+    "-fls", "-fprint", "-fprint0", "-fprintf",
+})
+_STDERR_NULL = "2>/dev/null"
+
+
+def _split_unquoted(text: str, sep: str):
+    """Split on sep outside quotes. None means the quotes are unfinished."""
+    parts = []
+    buf = []
+    quote = ""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(text):
+                buf.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == sep:
+            part = "".join(buf).strip()
+            if not part:
+                return None
+            parts.append(part)
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    if quote:
+        return None
+    part = "".join(buf).strip()
+    if not part:
+        return None
+    parts.append(part)
+    return parts
+
+
+def _strip_readonly_syntax(segment: str):
+    """Drop unquoted 2>/dev/null. None means the segment can change state."""
+    out = []
+    quote = ""
+    i = 0
+    n = len(segment)
+    while i < n:
+        ch = segment[i]
+        if quote == "'":
+            out.append(ch)
+            if ch == "'":
+                quote = ""
+            i += 1
+            continue
+        if quote == '"':
+            if ch == "$" or ch == "`":
+                return None
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(segment[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                quote = ""
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "\\":
+            return None
+        if segment.startswith(_STDERR_NULL, i):
+            before_ok = i == 0 or segment[i - 1].isspace()
+            after = i + len(_STDERR_NULL)
+            after_ok = after == n or segment[after].isspace()
+            if before_ok and after_ok:
+                out.append(" ")
+                i = after
+                continue
+        if ch in ";&`<>$" or segment.startswith("$(", i):
+            return None
+        out.append(ch)
+        i += 1
+    if quote:
+        return None
+    return "".join(out)
+
+
+def _segment_is_readonly(segment: str) -> bool:
+    cleaned = _strip_readonly_syntax(segment)
+    if cleaned is None:
+        return False
+    try:
+        argv = shlex.split(cleaned, posix=True)
+    except ValueError:
+        return False
+    if not argv or "/" in argv[0] or "\\" in argv[0] or "=" in argv[0]:
+        return False
+    cmd = argv[0]
+    if cmd in _READONLY_BINARIES:
+        if cmd == "find" and any(arg in _FIND_WRITERS for arg in argv[1:]):
+            return False
+        return True
+    if cmd in _VERSION_BINARIES:
+        return argv[1:] in (["--version"], ["-V"])
+    return False
+
+
+def _bash_is_readonly(command: str) -> bool:
+    """True when every stage is a read-only probe joined by | or 2>/dev/null."""
+    text = command.strip()
+    if not text or "\n" in text or "\r" in text or "\x00" in text:
+        return False
+    segments = _split_unquoted(text, "|")
+    if not segments:
+        return False
+    return all(_segment_is_readonly(segment) for segment in segments)
+
+
 def run_bash(command: str) -> str:
     denied = _ready_for_tool()
     if denied:
         return denied
-    denied = wait_for_approval("bash", command)
-    if denied:
-        return denied
+    if not _bash_is_readonly(command):
+        denied = wait_for_approval("bash", command)
+        if denied:
+            return denied
     return run_in_sandbox(command)
 
 

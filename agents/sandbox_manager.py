@@ -2,7 +2,9 @@
 
 Host-side seeding streams `git archive` into `docker run tar` with
 subprocess pipes. No shell is started, so Windows does not depend on a
-POSIX `|` operator.
+POSIX `|` operator. The archive excludes `.env` so secrets are not copied
+into /workspace. Host environment enters the lane only through docker run
+-e, and only for names in SANDBOX_ENV_ALLOWLIST.
 
 sandbox_id is the container name: sa-{task_id}-{name}.
 Index file: {repo_root}/.worktrees/index.json, key "sandboxes".
@@ -26,6 +28,15 @@ from typing import Callable, Iterator, TypeVar, TypedDict
 
 
 DEFAULT_IMAGE = "safeagent-sandbox:py310"
+# Host variable names that may be passed with docker run -e. Empty on purpose:
+# the model client runs on the host, and `env` inside the lane is auto-approved.
+SANDBOX_ENV_ALLOWLIST: tuple[str, ...] = ()
+_ARCHIVE_EXCLUDES = (
+    ":(exclude).env",
+    ":(glob,exclude)**/.env",
+    ":(exclude).env.*",
+    ":(glob,exclude)**/.env.*",
+)
 HELPER_IMAGE = "alpine:latest"
 # Docker Engine registry-mirrors. USTC and NetEase are the Docker Desktop example;
 # neither host resolves here, so DaoCloud is tried first.
@@ -532,8 +543,12 @@ class SandboxManager:
         workspace_volume: str,
         output_volume: str,
     ) -> list[str]:
-        """docker run argv for a long-lived lane. Host env is not forwarded."""
-        return [
+        """docker run argv for a long-lived lane.
+
+        The process environment is not copied. Only SANDBOX_ENV_ALLOWLIST
+        names are added with -e, and .env is never mounted as a file.
+        """
+        command = [
             "docker", "run", "-d",
             "--name", container_name,
             "--cpus=1.0",
@@ -552,10 +567,21 @@ class SandboxManager:
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
             "-v", f"{workspace_volume}:/workspace",
             "-v", f"{output_volume}:/outputs",
-            "--entrypoint", "sleep",
-            self.image,
-            "infinity",
         ]
+        command.extend(self._sandbox_env_flags())
+        command.extend(["--entrypoint", "sleep", self.image, "infinity"])
+        return command
+
+    def _sandbox_env_flags(self) -> list[str]:
+        flags: list[str] = []
+        for name in SANDBOX_ENV_ALLOWLIST:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                continue
+            value = os.environ.get(name)
+            if value is None or "\n" in value or "\r" in value or "\x00" in value:
+                continue
+            flags.extend(["-e", "%s=%s" % (name, value)])
+        return flags
 
     def _build_exec_argv(self, sandbox_id: str, command: str, token: str) -> list[str]:
         out = f"/tmp/sa-{token}.out"
@@ -704,7 +730,10 @@ class SandboxManager:
         `git archive` stdout is attached to `docker run -i tar` stdin. The
         parent closes its copy of that pipe so tar sees EOF when git exits.
         """
-        archive_cmd = ["git", "-C", str(self.repo_root), "archive", "--", commit]
+        archive_cmd = [
+            "git", "-C", str(self.repo_root), "archive", commit, "--", ".",
+            *_ARCHIVE_EXCLUDES,
+        ]
         extract_cmd = [
             "docker", "run", "--name", container_name, "--rm", "-i",
             "-v", f"{workspace_volume}:/workspace",
