@@ -172,7 +172,7 @@ def wait_for_approval(action: str, args_preview: str):
     except Exception as exc:
         return tool_error(exc)
     if decision is None:
-        return "Error: %s approval timed out" % action
+        return "Approval timed out, action denied"
     if not decision:
         return "Error: %s rejected" % action
     return None

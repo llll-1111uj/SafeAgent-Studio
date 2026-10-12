@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -25,11 +26,17 @@ if str(AGENTS_DIR) not in sys.path:
 
 import s02_tool_use as s02
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from reaper import SandboxReaper
 from sandbox_manager import SandboxError
 
 APPROVAL_TIMEOUT_SECONDS = 300.0
+APPROVAL_DENIED = "Approval timed out, action denied"
+
+
+def _sandbox_name(task_id: int) -> str:
+    return "agent-%s" % task_id
 
 
 class ApproveRequest(BaseModel):
@@ -106,11 +113,19 @@ class ApprovalBroker:
                 raise RuntimeError("task already has a pending approval")
             self._pending[task_id] = pending
         shown = args_preview if len(args_preview) <= 500 else args_preview[:500] + "..."
+        headline = shown.strip().splitlines()[0].strip() if shown.strip() else action
+        print(
+            "[hitl] waiting for approval task_id=%s action=%s timeout=%.0fs"
+            % (task_id, action, self._timeout),
+            flush=True,
+        )
         self._hub.publish(task_id, {
             "status": "pending_approval",
             "task_id": task_id,
             "action": action,
             "args": shown,
+            "message": "需要您授权执行 %s" % headline,
+            "ui": "approval_dialog",
         })
         try:
             signaled = pending.event.wait(self._timeout)
@@ -119,6 +134,14 @@ class ApprovalBroker:
                 if self._pending.get(task_id) is pending:
                     self._pending.pop(task_id, None)
         if not signaled:
+            print("[hitl] approval timed out task_id=%s action=%s" % (task_id, action), flush=True)
+            self._hub.publish(task_id, {
+                "status": "timeout",
+                "task_id": task_id,
+                "action": action,
+                "message": APPROVAL_DENIED,
+            })
+            _mark_approval_timeout(task_id)
             return None
         return pending.approved
 
@@ -153,19 +176,177 @@ def _load_task(task_id: int) -> dict | None:
     return task
 
 
+def _ensure_task_file(task_id: int) -> dict:
+    """Create a pending task file when /run is called for a new id."""
+    task = _load_task(task_id)
+    if task is not None:
+        return task
+    path = _task_path(task_id)
+    task = {
+        "id": task_id,
+        "subject": "task %s" % task_id,
+        "description": "",
+        "status": "pending",
+        "owner": "",
+        "worktree": "",
+        "blockedBy": [],
+        "updated_at": time.time(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(task, indent=2, ensure_ascii=False), encoding="utf-8")
+    print("[api] created task file %s" % path, flush=True)
+    return task
+
+
 def _publish_status(payload: dict) -> None:
     task_id = payload.get("task_id")
     if isinstance(task_id, int):
         hub.publish(task_id, payload)
 
 
+def _update_task(task_id: int, **fields) -> dict:
+    path = _task_path(task_id)
+    task = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(task, dict):
+        raise SandboxError("task file must be a JSON object")
+    task.update(fields)
+    task["updated_at"] = time.time()
+    path.write_text(json.dumps(task, indent=2, ensure_ascii=False), encoding="utf-8")
+    return task
+
+
+def _active_sandbox(task_id: int, name: str) -> dict | None:
+    index_path = ROOT / ".worktrees" / "index.json"
+    if not name or not index_path.is_file():
+        return None
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print("[sandbox] index read failed task_id=%s: %s" % (task_id, exc), flush=True)
+        return None
+    found = None
+    for item in data.get("sandboxes", []):
+        if item.get("task_id") == task_id and item.get("name") == name and item.get("status") == "active":
+            found = item
+    return found
+
+
+def _bind_sandbox(task_id: int, saved: dict) -> dict:
+    """Point the task at the sandbox s02 looks up: in_progress plus worktree name."""
+    name = str(saved.get("name") or "")
+    bound = _update_task(
+        task_id,
+        status="in_progress",
+        worktree=name,
+        sandbox={
+            "name": name,
+            "container_name": saved.get("container_name", ""),
+            "container_id": saved.get("container_id", ""),
+            "status": saved.get("status", ""),
+        },
+        error="",
+    )
+    print(
+        "[sandbox] task bound task_id=%s status=%s worktree=%r container_name=%s"
+        % (task_id, bound.get("status"), bound.get("worktree"), saved.get("container_name")),
+        flush=True,
+    )
+    return bound
+
+
+def _mark_approval_timeout(task_id: int) -> None:
+    """Record the denial. The agent thread keeps running and can choose another action."""
+    try:
+        _update_task(task_id, status="timeout", error=APPROVAL_DENIED)
+    except (OSError, json.JSONDecodeError, SandboxError) as exc:
+        print("[hitl] failed to mark task %s timeout: %s" % (task_id, exc), flush=True)
+
+
+def _mark_task_failed(task_id: int, error: str) -> None:
+    try:
+        task = _update_task(task_id, status="failed", worktree="", error=error)
+    except (OSError, json.JSONDecodeError, SandboxError) as exc:
+        print("[sandbox] failed to mark task %s failed: %s" % (task_id, exc), flush=True)
+        return
+    print(
+        "[sandbox] task marked failed task_id=%s status=%s worktree=%r"
+        % (task_id, task.get("status"), task.get("worktree")),
+        flush=True,
+    )
+
+
+def _ensure_sandbox(task_id: int) -> bool:
+    """Create and bind a sandbox. Return False when the agent must not start."""
+    task = _load_task(task_id) or {}
+    bound_name = str(task.get("worktree") or "").strip()
+    if task.get("status") == "in_progress" and bound_name:
+        existing = _active_sandbox(task_id, bound_name)
+        if existing:
+            print(
+                "[sandbox] reuse active sandbox task_id=%s name=%s container_name=%s"
+                % (task_id, bound_name, existing.get("container_name")),
+                flush=True,
+            )
+            return True
+    sandbox_name = _sandbox_name(task_id)
+    print("[sandbox] create_sandbox before task_id=%s name=%s" % (task_id, sandbox_name), flush=True)
+    try:
+        saved = s02.get_sandbox().create_sandbox(sandbox_name, task_id)
+    except SandboxError as exc:
+        print("[sandbox] create_sandbox error task_id=%s: %s" % (task_id, exc), flush=True)
+        _mark_task_failed(task_id, str(exc))
+        s02.publish_status("error", s02.tool_error(exc))
+        return False
+    print(
+        "[sandbox] create_sandbox after task_id=%s return=%s"
+        % (task_id, json.dumps(saved, ensure_ascii=False)),
+        flush=True,
+    )
+    try:
+        _bind_sandbox(task_id, saved)
+    except (OSError, json.JSONDecodeError, SandboxError) as exc:
+        print("[sandbox] bind error task_id=%s: %s" % (task_id, exc), flush=True)
+        _mark_task_failed(task_id, str(exc))
+        s02.publish_status("error", s02.tool_error(exc))
+        return False
+    return True
+
+
+def _assistant_stdout(messages: list) -> str:
+    if not messages or not isinstance(messages[-1], dict):
+        return ""
+    content = messages[-1].get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for block in content:
+        text = getattr(block, "text", None)
+        if text is None and isinstance(block, dict):
+            text = block.get("text")
+        if text:
+            parts.append(str(text))
+    return "\n".join(parts)
+
+
 def _agent_thread(task_id: int, prompt: str) -> None:
     # contextvars do not cross into a new thread. Set the id here.
     token = s02.set_task_id(task_id)
+    messages = [{"role": "user", "content": prompt}]
     try:
-        s02.agent_loop([{"role": "user", "content": prompt}])
+        _update_task(task_id, stdout="", error="")
+        if not _ensure_sandbox(task_id):
+            return
+        s02.agent_loop(messages)
+        _update_task(task_id, status="completed", stdout=_assistant_stdout(messages), error="")
     except Exception as exc:
-        print("[agent] task %s failed: %s" % (task_id, s02.tool_error(exc)), file=sys.stderr)
+        message = s02.tool_error(exc)
+        print("[agent] task %s failed: %s" % (task_id, message), file=sys.stderr, flush=True)
+        try:
+            _update_task(task_id, status="failed", error=message)
+        except (OSError, json.JSONDecodeError, SandboxError) as write_exc:
+            print("[agent] failed to record task %s error: %s" % (task_id, write_exc), flush=True)
     finally:
         s02.reset_task_id(token)
         with _runs_lock:
@@ -178,6 +359,7 @@ async def lifespan(app: FastAPI):
     hub.bind_loop(asyncio.get_running_loop())
     s02.set_approval_waiter(broker.wait)
     s02.set_status_publisher(_publish_status)
+    _log_routes()
     try:
         _reaper = SandboxReaper(repo_root=ROOT)
         print("[sandbox] reconciliation", _reaper.startup_reconciliation(), flush=True)
@@ -194,6 +376,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SafeAgent Studio", lifespan=lifespan)
+
+
+def _log_routes() -> None:
+    print("[route] registered paths:", flush=True)
+    for route in app.routes:
+        methods = getattr(route, "methods", None) or set()
+        path = getattr(route, "path", "")
+        label = ",".join(sorted(methods)) if methods else "WEBSOCKET"
+        print("[route] %s %s" % (label, path), flush=True)
 
 
 @app.get("/health")
@@ -229,6 +420,38 @@ def approve(body: ApproveRequest) -> dict:
     return {"task_id": body.task_id, "approved": body.approved}
 
 
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: int):
+    """Return the finished task only.
+
+    Live states, including pending_approval, are pushed on
+    /ws/agent?task_id=. A pending_approval event has ui=approval_dialog
+    and is the signal to open the approval popup.
+    """
+    if task_id < 1:
+        raise HTTPException(status_code=400, detail="invalid task_id")
+    try:
+        task = _load_task(task_id)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="task file is corrupt") from exc
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    status = str(task.get("status") or "")
+    with _runs_lock:
+        running = task_id in _running
+    if running or status not in ("completed", "failed", "timeout"):
+        return JSONResponse(status_code=202, content={
+            "task_id": task_id,
+            "websocket": "/ws/agent?task_id=%s" % task_id,
+        })
+    return {
+        "task_id": task_id,
+        "status": status,
+        "stdout": str(task.get("stdout") or ""),
+        "error": str(task.get("error") or ""),
+    }
+
+
 @app.post("/api/tasks/{task_id}/run", status_code=202)
 def run_task(task_id: int, body: RunRequest) -> dict:
     """Start one agent thread.
@@ -240,11 +463,9 @@ def run_task(task_id: int, body: RunRequest) -> dict:
     if task_id < 1:
         raise HTTPException(status_code=400, detail="invalid task_id")
     try:
-        task = _load_task(task_id)
+        task = _ensure_task_file(task_id)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="task file is corrupt") from exc
-    if task is None:
-        raise HTTPException(status_code=404, detail="task not found")
     if task.get("status") == "completed":
         raise HTTPException(status_code=409, detail="task is completed")
     with _runs_lock:

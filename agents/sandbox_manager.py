@@ -289,10 +289,13 @@ class SandboxManager:
     def remove_sandbox(self, sandbox_id: str, force: bool = False, *, complete_task: bool = False) -> dict:
         """Stop, delete the container and both volumes, then mark the index removed.
 
-        Transition: active|kept|failed|creating -> removing -> removed.
+        sandbox_id may be the container name sa-{task_id}-{name}, or the
+        sandbox name itself, such as agent-999. Transition:
+        active|kept|failed|creating -> removing -> removed.
         docker stop -t 10 is followed by docker rm -f even when stop fails.
         force is kept for existing callers. complete_task=True marks the task completed.
         """
+        sandbox_id = self._resolve_sandbox_id(sandbox_id)
         task_id, _name = parse_sandbox_id(sandbox_id)
         entry = self._load_entry(sandbox_id)
         previous = entry["status"]
@@ -900,6 +903,35 @@ class SandboxManager:
             if item.get("container_name") == sandbox_id:
                 found = item
         return found
+
+    def _resolve_sandbox_id(self, sandbox_id: str) -> str:
+        """Return the container name for a container id or a sandbox name like agent-999."""
+        try:
+            parse_sandbox_id(sandbox_id)
+            return sandbox_id
+        except ValueError:
+            pass
+
+        removable = {"creating", "active", "kept", "failed", "removing"}
+
+        def read(data: dict) -> str:
+            found = ""
+            live = ""
+            for item in data.get("sandboxes", []):
+                if item.get("name") != sandbox_id:
+                    continue
+                container = str(item.get("container_name") or "")
+                if not container:
+                    continue
+                found = container
+                if item.get("status") in removable:
+                    live = container
+            chosen = live or found
+            if not chosen:
+                raise SandboxError(f"Unknown sandbox '{sandbox_id}'")
+            return chosen
+
+        return self._mutate(read, save=False)
 
     def _load_entry(self, sandbox_id: str) -> dict:
         def read(data: dict) -> dict:

@@ -2,9 +2,11 @@
   "id": 999,
   "subject": "sandbox smoke test",
   "description": "",
-  "status": "in_progress",
+  "status": "failed",
   "owner": "",
   "worktree": "",
   "blockedBy": [],
-  "updated_at": 1791740379.0956984
+  "updated_at": 1791817414.417507,
+  "stdout": "",
+  "error": "sandbox name agent is already in use"
 }

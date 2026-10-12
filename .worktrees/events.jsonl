@@ -126,3 +126,17 @@
 {"event": "sandbox.create.before", "ts": 1791741843.7246697, "sandbox": {"name": "reaper-test", "task_id": 888, "container_name": "sa-888-reaper-test", "status": "creating"}}
 {"event": "sandbox.create.after", "ts": 1791741845.6308203, "sandbox": {"name": "reaper-test", "task_id": 888, "container_name": "sa-888-reaper-test", "status": "active"}}
 {"event": "sandbox.timeout", "ts": 1791741845.677088, "sandbox": {"name": "reaper-test", "task_id": 888, "container_name": "sa-888-reaper-test", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791812487.4797335, "sandbox": {"name": "agent", "task_id": 1001, "container_name": "sa-1001-agent", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791812489.6234403, "sandbox": {"name": "agent", "task_id": 1001, "container_name": "sa-1001-agent", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791814171.6768582, "sandbox": {"name": "agent", "task_id": 888, "container_name": "sa-888-agent", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791814173.7335389, "sandbox": {"name": "agent", "task_id": 888, "container_name": "sa-888-agent", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791815127.7170117, "sandbox": {"name": "agent", "task_id": 888, "container_name": "sa-888-agent", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791815129.6099184, "sandbox": {"name": "agent", "task_id": 888, "container_name": "sa-888-agent", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791816231.8160658, "sandbox": {"name": "agent", "task_id": 1001, "container_name": "sa-1001-agent", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791816233.6907856, "sandbox": {"name": "agent", "task_id": 1001, "container_name": "sa-1001-agent", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791817088.896288, "sandbox": {"name": "agent", "task_id": 999, "container_name": "sa-999-agent", "status": "creating"}}
+{"event": "sandbox.create.before", "ts": 1791817369.5612001, "sandbox": {"name": "agent", "task_id": 999, "container_name": "sa-999-agent", "status": "creating"}}
+{"event": "sandbox.create.before", "ts": 1791817414.4155087, "sandbox": {"name": "agent", "task_id": 999, "container_name": "sa-999-agent", "status": "creating"}}
+{"event": "sandbox.create.before", "ts": 1791817472.8692663, "sandbox": {"name": "agent", "task_id": 10002, "container_name": "sa-10002-agent", "status": "creating"}}
+{"event": "sandbox.create.before", "ts": 1791818262.25635, "sandbox": {"name": "agent-1009", "task_id": 1009, "container_name": "sa-1009-agent-1009", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791818264.2154467, "sandbox": {"name": "agent-1009", "task_id": 1009, "container_name": "sa-1009-agent-1009", "status": "active"}}
