@@ -10,11 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parent
 AGENTS_DIR = ROOT / "agents"
@@ -31,6 +34,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from reaper import SandboxReaper
 from sandbox_manager import SandboxError
+from session_memory import SessionMemory, estimate_tokens
 
 APPROVAL_TIMEOUT_SECONDS = 300.0
 APPROVAL_DENIED = "Approval timed out, action denied"
@@ -48,6 +52,7 @@ class ApproveRequest(BaseModel):
 
 class RunRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
+    session_id: Optional[str] = None
 
 
 class Pending:
@@ -62,7 +67,7 @@ class ConnectionHub:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._clients: dict[int, set[WebSocket]] = {}
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -166,14 +171,16 @@ broker = ApprovalBroker(hub)
 _runs_lock = threading.Lock()
 _running: set[int] = set()
 _keep_tasks: set[int] = set()
-_reaper: SandboxReaper | None = None
+_reaper: Optional[SandboxReaper] = None
+_sessions = SessionMemory()
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
 
 
 def _task_path(task_id: int) -> Path:
     return ROOT / ".tasks" / ("task_%s.json" % task_id)
 
 
-def _load_task(task_id: int) -> dict | None:
+def _load_task(task_id: int) -> Optional[dict]:
     path = _task_path(task_id)
     if not path.is_file():
         return None
@@ -222,7 +229,7 @@ def _update_task(task_id: int, **fields) -> dict:
     return task
 
 
-def _active_sandbox(task_id: int, name: str) -> dict | None:
+def _active_sandbox(task_id: int, name: str) -> Optional[dict]:
     index_path = ROOT / ".worktrees" / "index.json"
     if not name or not index_path.is_file():
         return None
@@ -398,24 +405,66 @@ def _release_sandbox(task_id: int) -> None:
         _keep_tasks.discard(task_id)
 
 
-def _agent_thread(task_id: int, prompt: str) -> None:
+def _session_id_of(value: Optional[str]) -> str:
+    text = (value or "").strip()
+    if _SESSION_ID_RE.fullmatch(text):
+        return text
+    return uuid.uuid4().hex
+
+
+def _summarize_turns(older: list) -> str:
+    """Ask the model to fold older session turns into one short summary."""
+    lines = []
+    for item in older:
+        role = item.get("role") or "user"
+        content = item.get("content")
+        if not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False)
+        lines.append("%s: %s" % (role, content))
+    prompt = (
+        "请把下面的对话压缩成一段中文摘要，保留用户目标、关键结论、文件名和未完成事项。不要寒暄。\n\n"
+        + "\n".join(lines)
+    )
+    response = s02.client.messages.create(
+        model=s02.MODEL,
+        max_tokens=800,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = s02._final_text(response.content).strip()
+    return text or "此前对话已压缩。"
+
+
+def _agent_thread(task_id: int, prompt: str, session_id: str) -> None:
     # contextvars do not cross into a new thread. Set the id here.
     token = s02.set_task_id(task_id)
-    messages = [{"role": "user", "content": prompt}]
+    messages = _sessions.messages_for(session_id, prompt, _summarize_turns)
+    answer = ""
     try:
-        _update_task(task_id, stdout="", error="")
+        _update_task(task_id, stdout="", error="", session_id=session_id)
         if not _ensure_sandbox(task_id):
+            answer = "上一轮没有完成：沙箱未能创建。"
             return
         s02.agent_loop(messages)
-        _update_task(task_id, status="completed", stdout=_assistant_stdout(messages), error="")
+        answer = _assistant_stdout(messages)
+        _update_task(task_id, status="completed", stdout=answer, error="")
     except Exception as exc:
         message = s02.tool_error(exc)
+        answer = "上一轮没有完成：" + message
         print("[agent] task %s failed: %s" % (task_id, message), file=sys.stderr, flush=True)
         try:
             _update_task(task_id, status="failed", error=message)
         except (OSError, json.JSONDecodeError, SandboxError) as write_exc:
             print("[agent] failed to record task %s error: %s" % (task_id, write_exc), flush=True)
     finally:
+        try:
+            stored = _sessions.commit(session_id, prompt, answer, _summarize_turns)
+            print(
+                "[session] remember session_id=%s turns=%s tokens~%s"
+                % (session_id, len(stored), estimate_tokens(stored)),
+                flush=True,
+            )
+        except Exception as exc:
+            print("[session] remember failed session_id=%s: %s" % (session_id, exc), flush=True)
         _release_sandbox(task_id)
         s02.reset_task_id(token)
         with _runs_lock:
@@ -562,10 +611,11 @@ def run_task(task_id: int, body: RunRequest) -> dict:
         if task_id in _running:
             raise HTTPException(status_code=409, detail="task agent is already running")
         _running.add(task_id)
+    session_id = _session_id_of(body.session_id)
     try:
         threading.Thread(
             target=_agent_thread,
-            args=(task_id, body.prompt),
+            args=(task_id, body.prompt, session_id),
             name="agent-%s" % task_id,
             daemon=True,
         ).start()
@@ -573,7 +623,7 @@ def run_task(task_id: int, body: RunRequest) -> dict:
         with _runs_lock:
             _running.discard(task_id)
         raise
-    return {"task_id": task_id, "status": "started"}
+    return {"task_id": task_id, "status": "started", "session_id": session_id}
 
 
 if __name__ == "__main__":

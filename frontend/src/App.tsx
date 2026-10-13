@@ -20,7 +20,7 @@ const TONE: Record<string, string> = {
 export default function App() {
   const [prompt, setPrompt] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
-  const { taskId, running, deciding, spinning, lines, phase, finalAnswer, pending, error, start, decide } = useAgentSocket();
+  const { taskId, sessionId, running, deciding, spinning, lines, phase, finalAnswer, pending, error, start, decide } = useAgentSocket();
 
   useEffect(() => {
     const node = logRef.current;
@@ -61,7 +61,7 @@ export default function App() {
           </Button>
           {spinning ? <Spin size="small" aria-label="正在处理" /> : null}
           {taskId !== null ? (
-            <Typography.Text type="secondary">任务 {taskId}</Typography.Text>
+            <Typography.Text type="secondary">任务 {taskId} · 会话 {sessionId.slice(0, 8)}</Typography.Text>
           ) : null}
         </div>
         {error ? <Alert type="error" showIcon message={error} /> : null}

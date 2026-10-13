@@ -1,0 +1,19 @@
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 虚拟环境
+.venv/
+venv/
+
+# 环境变量
+.env
+
+# 运行时生成的任务和状态文件
+.tasks/
+.worktrees/index.json
+.worktrees/events.jsonl
+.worktrees/index.lock
+
+# 沙箱导出的产物（这些是动态生成的，不应该纳入版本控制）
+.worktrees/artifacts/

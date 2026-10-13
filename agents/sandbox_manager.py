@@ -23,7 +23,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Iterator, TypeVar, TypedDict
+from typing import Callable, Iterator, Optional, TypeVar, TypedDict, Union
 
 
 
@@ -93,7 +93,7 @@ def parse_sandbox_id(sandbox_id: str) -> tuple[int, str]:
     return int(matched.group(1)), matched.group(2)
 
 
-def _clip(text: str | bytes | None) -> str:
+def _clip(text: Optional[Union[str, bytes]]) -> str:
     if text is None:
         return ""
     if isinstance(text, bytes):
@@ -101,7 +101,7 @@ def _clip(text: str | bytes | None) -> str:
     return text[:OUTPUT_LIMIT]
 
 
-def _timeout_result(stdout: str | bytes | None = None, stderr: str | bytes | None = None) -> ExecResult:
+def _timeout_result(stdout: Optional[Union[str, bytes]] = None, stderr: Optional[Union[str, bytes]] = None) -> ExecResult:
     return {
         "stdout": _clip(stdout),
         "stderr": _clip(stderr),
@@ -114,7 +114,7 @@ def _timeout_result(stdout: str | bytes | None = None, stderr: str | bytes | Non
 class SandboxManager:
     """Create, exec, keep, and remove a per-task Docker sandbox."""
 
-    def __init__(self, repo_root: Path | str | None = None, *, image: str = DEFAULT_IMAGE):
+    def __init__(self, repo_root: Optional[Union[Path, str]] = None, *, image: str = DEFAULT_IMAGE):
         self.repo_root = Path(repo_root) if repo_root is not None else Path.cwd()
         self.repo_root = self.repo_root.resolve()
         self.image = image
@@ -339,7 +339,7 @@ class SandboxManager:
             stderr=subprocess.PIPE,
             shell=False,
         )
-        extract: subprocess.Popen[bytes] | None = None
+        extract: Optional[subprocess.Popen[bytes]] = None
         try:
             if pack.stdout is None or pack.stderr is None:
                 raise SandboxError("artifact tar did not provide pipes")
@@ -462,7 +462,7 @@ class SandboxManager:
         self._emit("sandbox.remove.after", saved)
         return saved
 
-    def list_expired(self, now: float | None = None) -> list[dict]:
+    def list_expired(self, now: Optional[float] = None) -> list[dict]:
         """Active lanes whose index deadline_ts is already due.
 
         The deadline lives in index.json, so a restarted process sees the same
@@ -718,7 +718,7 @@ class SandboxManager:
         time.sleep(self.kill_grace)
         self._signal_group(sandbox_id, pgid, "KILL")
 
-    def _read_exec_pgid(self, sandbox_id: str, token: str) -> int | None:
+    def _read_exec_pgid(self, sandbox_id: str, token: str) -> Optional[int]:
         result = self._run(
             ["docker", "exec", "-u", "1000:1000", sandbox_id, "cat", f"/tmp/sa-{token}.pid"],
             timeout=20,
@@ -807,7 +807,7 @@ class SandboxManager:
         return result.returncode == 0
 
     @staticmethod
-    def _last_line(text: str | None) -> str:
+    def _last_line(text: Optional[str]) -> str:
         lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
         return lines[-1] if lines else "pull failed"
 
@@ -839,7 +839,7 @@ class SandboxManager:
             stderr=subprocess.PIPE,
             shell=False,
         )
-        extract: subprocess.Popen[bytes] | None = None
+        extract: Optional[subprocess.Popen[bytes]] = None
         try:
             if archive.stdout is None or archive.stderr is None:
                 raise SandboxError("git archive did not provide pipes")
@@ -1007,7 +1007,7 @@ class SandboxManager:
         })
         return copy.deepcopy(current)
 
-    def _transition(self, data: dict, sandbox_id: str, status: str, extra: dict | None = None) -> dict:
+    def _transition(self, data: dict, sandbox_id: str, status: str, extra: Optional[dict] = None) -> dict:
         current = self._latest(data, sandbox_id)
         if current is None:
             raise SandboxConsistencyError(f"index missing sandbox {sandbox_id}")
@@ -1019,7 +1019,7 @@ class SandboxManager:
             current.update(extra)
         return copy.deepcopy(current)
 
-    def _latest(self, data: dict, sandbox_id: str) -> dict | None:
+    def _latest(self, data: dict, sandbox_id: str) -> Optional[dict]:
         found = None
         for item in data.get("sandboxes", []):
             if item.get("container_name") == sandbox_id:
@@ -1091,7 +1091,7 @@ class SandboxManager:
         payload = json.dumps(data, indent=2, ensure_ascii=False)
         tmp = self.index_path.with_suffix(".json.tmp")
         tmp.write_text(payload, encoding="utf-8")
-        last_error: PermissionError | None = None
+        last_error: Optional[PermissionError] = None
         for attempt in range(5):
             try:
                 os.replace(tmp, self.index_path)
@@ -1249,7 +1249,7 @@ class SandboxManager:
             return result
         raise SandboxError(f"command failed ({result.returncode}): {' '.join(argv[:4])}: {detail.strip()}")
 
-    def _emit(self, event: str, sandbox: dict | None = None, error: str | None = None) -> None:
+    def _emit(self, event: str, sandbox: Optional[dict] = None, error: Optional[str] = None) -> None:
         body = sandbox or {}
         payload: dict = {
             "event": event,

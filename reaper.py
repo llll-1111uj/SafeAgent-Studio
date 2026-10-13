@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Optional, Union
 
 ROOT = Path(__file__).resolve().parent
 AGENTS = ROOT / "agents"
@@ -25,9 +26,9 @@ class SandboxReaper:
 
     def __init__(
         self,
-        repo_root: Path | str | None = None,
+        repo_root: Optional[Union[Path, str]] = None,
         *,
-        manager: SandboxManager | None = None,
+        manager: Optional[SandboxManager] = None,
         interval: float = 5.0,
     ):
         if interval <= 0:
@@ -35,7 +36,7 @@ class SandboxReaper:
         self.manager = manager if manager is not None else SandboxManager(repo_root=repo_root)
         self.interval = interval
         self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._thread: Optional[threading.Thread] = None
 
     def startup_reconciliation(self) -> dict:
         """Compare safeagent.managed=true containers with the index.
@@ -92,7 +93,7 @@ class SandboxReaper:
                 return
 
 
-def startup_reconciliation(repo_root: Path | str | None = None) -> dict:
+def startup_reconciliation(repo_root: Optional[Union[Path, str]] = None) -> dict:
     """Run startup reconciliation against repo_root and return the report."""
     return SandboxReaper(repo_root=repo_root or ROOT).startup_reconciliation()
 

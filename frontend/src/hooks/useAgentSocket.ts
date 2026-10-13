@@ -57,6 +57,17 @@ async function readDetail(response: Response): Promise<string> {
   return response.statusText || "请求失败";
 }
 
+function loadSessionId(): string {
+  const key = "safeagent.session_id";
+  const existing = sessionStorage.getItem(key);
+  if (existing) {
+    return existing;
+  }
+  const created = crypto.randomUUID();
+  sessionStorage.setItem(key, created);
+  return created;
+}
+
 function openSocket(taskId: number): Promise<WebSocket> {
   const socket = new WebSocket(`${wsOrigin(API_ORIGIN)}/ws/agent?task_id=${taskId}`);
   return new Promise((resolve, reject) => {
@@ -90,6 +101,8 @@ export function useAgentSocket() {
   const [error, setError] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
   const taskIdRef = useRef<number | null>(null);
+  const sessionRef = useRef<string>(loadSessionId());
+  const [sessionId, setSessionId] = useState<string>(sessionRef.current);
   const lineKey = useRef(0);
   const pendingRef = useRef<AgentMessage | null>(null);
   const autoActionsRef = useRef<Set<string>>(new Set());
@@ -198,7 +211,7 @@ export function useAgentSocket() {
       const response = await fetch(`${API_ORIGIN}/api/tasks/${id}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify({ prompt: text, session_id: sessionRef.current }),
       });
       if (response.status === 409) {
         setError("任务已在运行");
@@ -217,6 +230,16 @@ export function useAgentSocket() {
         return;
       }
       push({ status: "started", message: `任务 ${id} 已启动` });
+      try {
+        const started = (await response.json()) as { session_id?: unknown };
+        if (typeof started.session_id === "string" && started.session_id) {
+          sessionRef.current = started.session_id;
+          setSessionId(started.session_id);
+          sessionStorage.setItem("safeagent.session_id", started.session_id);
+        }
+      } catch {
+        // The task is already running. A missing session id keeps the local one.
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "启动任务失败");
       setPhase("error");
@@ -288,5 +311,5 @@ export function useAgentSocket() {
     return approveCurrent(approved, rememberSimilar, null, keepSandbox);
   }, [approveCurrent]);
 
-  return { taskId, running, deciding, spinning, lines, phase, finalAnswer, pending, error, start, decide };
+  return { taskId, sessionId, running, deciding, spinning, lines, phase, finalAnswer, pending, error, start, decide };
 }

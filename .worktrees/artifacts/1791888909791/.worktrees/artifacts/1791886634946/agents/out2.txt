@@ -1,1 +1,0 @@
-var dataSK={"nameen":"changchun","cityname":"闀挎槬","city":"101060101","temp":"10.6","tempf":"51.1","WD":"鍖楅","wde":"N","WS":"1绾","wse":"5km\/h","SD":"54%","sd":"54%","qy":"994","njd":"14km","time":"22:15","rain":"0","rain24h":"0","aqi":"65","aqi_pm25":"65","weather":"鏅","weathere":"Sunny","weathercode":"d00","limitnumber":"","date":"10鏈08鏃(鏄熸湡鍥)"}
