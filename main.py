@@ -561,7 +561,11 @@ def approve(body: ApproveRequest) -> dict:
         except (OSError, json.JSONDecodeError, SandboxError) as exc:
             print("[hitl] failed to mark task %s keep: %s" % (body.task_id, exc), flush=True)
     if not broker.decide(body.task_id, body.approved):
-        raise HTTPException(status_code=404, detail="no pending approval for this task")
+        print(
+            "[hitl] approve missed task_id=%s: no waiter in this process" % body.task_id,
+            flush=True,
+        )
+        raise HTTPException(status_code=409, detail="no pending approval for this task")
     hub.publish(body.task_id, {
         "status": "approved" if body.approved else "rejected",
         "task_id": body.task_id,

@@ -284,9 +284,11 @@ export function useAgentSocket() {
         body: JSON.stringify({ task_id: id, approved, keep_sandbox: keepSandbox }),
       });
       if (response.status === 409 || response.status === 404) {
-        setError("当前没有等待中的审批");
-        pendingRef.current = current;
-        setPending(current);
+        setError("当前没有等待中的审批。如果刚刚重启过 python main.py，内存里的审批已经丢了，请重新点击「启动任务」。");
+        pendingRef.current = null;
+        setPending(null);
+        setPhase("error");
+        setSpinning(false);
         return;
       }
       if (!response.ok) {
