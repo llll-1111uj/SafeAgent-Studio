@@ -841,12 +841,16 @@ def _final_text(content) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-def agent_loop(messages: list):
+def agent_loop(messages: list, system_extra=""):
+    system = SYSTEM
+    extra = system_extra.strip() if isinstance(system_extra, str) else ""
+    if extra:
+        system = SYSTEM + "\n\n" + extra
     try:
         while True:
             publish_status("thinking", "model request")
             response = client.messages.create(
-                model=MODEL, system=SYSTEM, messages=messages,
+                model=MODEL, system=system, messages=messages,
                 tools=TOOLS, max_tokens=8000,
             )
             messages.append({"role": "assistant", "content": response.content})

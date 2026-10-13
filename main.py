@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from reaper import SandboxReaper
 from sandbox_manager import SandboxError
+from memory_store import LongMemory, new_artifact_names
 from session_memory import SessionMemory, estimate_tokens
 
 APPROVAL_TIMEOUT_SECONDS = 300.0
@@ -174,6 +175,7 @@ _running: set[int] = set()
 _keep_tasks: set[int] = set()
 _reaper: Optional[SandboxReaper] = None
 _sessions = SessionMemory()
+_memory = LongMemory(ROOT / ".worktrees" / "chroma_db")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
 
 
@@ -450,14 +452,21 @@ def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Op
     token = s02.set_task_id(task_id)
     messages = _sessions.messages_for(session_id, prompt, _summarize_turns)
     answer = ""
+    completed = False
     try:
         _update_task(task_id, stdout="", error="", session_id=session_id)
         if not _ensure_sandbox(task_id, parent_task_id):
             answer = "上一轮没有完成：沙箱未能创建。"
             return
-        s02.agent_loop(messages)
+        system_extra = ""
+        try:
+            system_extra = _memory.recall(prompt)
+        except Exception as exc:
+            print("[memory] recall failed task_id=%s: %s" % (task_id, exc), flush=True)
+        s02.agent_loop(messages, system_extra)
         answer = _assistant_stdout(messages)
         _update_task(task_id, status="completed", stdout=answer, error="")
+        completed = True
     except Exception as exc:
         message = s02.tool_error(exc)
         answer = "上一轮没有完成：" + message
@@ -477,6 +486,17 @@ def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Op
         except Exception as exc:
             print("[session] remember failed session_id=%s: %s" % (session_id, exc), flush=True)
         _release_sandbox(task_id)
+        if completed:
+            try:
+                _memory.remember(
+                    task_id,
+                    session_id,
+                    prompt,
+                    answer,
+                    new_artifact_names(ROOT, task_id),
+                )
+            except Exception as exc:
+                print("[memory] remember failed task_id=%s: %s" % (task_id, exc), flush=True)
         s02.reset_task_id(token)
         with _runs_lock:
             _running.discard(task_id)
