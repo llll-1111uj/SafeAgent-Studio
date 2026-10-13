@@ -31,16 +31,19 @@ export default function App() {
   }, [lines, finalAnswer]);
 
   return (
-    <main className="mx-auto flex h-svh max-w-5xl flex-col gap-3 overflow-hidden px-4 py-4">
-      <header>
-        <Typography.Title level={3} className="!mb-1">
-          SafeAgent Studio
-        </Typography.Title>
-        <Typography.Text type="secondary">
-          先连上 WebSocket，再启动任务。高风险操作会停在审批弹窗，同意后才会继续。
-        </Typography.Text>
+    <div className="flex h-svh flex-col overflow-hidden">
+      <header className="w-full shrink-0 border-b border-slate-800 bg-slate-900 shadow-md">
+        <div className="mx-auto flex max-w-5xl flex-col gap-1 px-6 py-5">
+          <Typography.Title level={3} className="!mb-0 !text-white">
+            SafeAgent Studio
+          </Typography.Title>
+          <Typography.Text className="!text-slate-300">
+            先连上 WebSocket，再启动任务。高风险操作会停在审批弹窗，同意后才会继续。
+          </Typography.Text>
+        </div>
       </header>
 
+      <main className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col gap-3 overflow-hidden px-4 py-4">
       <section className="flex flex-col gap-3 rounded-lg bg-white p-4 shadow-sm">
         <Input.TextArea
           value={prompt}
@@ -97,6 +100,7 @@ export default function App() {
         deciding={deciding}
         onDecide={(approved, rememberSimilar, keepSandbox) => void decide(approved, rememberSimilar, keepSandbox)}
       />
-    </main>
+      </main>
+    </div>
   );
 }
