@@ -25,7 +25,9 @@ import os
 import re
 import shlex
 from pathlib import Path
+from urllib.parse import quote
 
+import requests
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from sandbox_manager import SandboxError, SandboxManager
@@ -46,6 +48,8 @@ SYSTEM = (
     "Act, don't explain. "
     "你处于断网沙箱，禁止尝试任何网络安装（pip install, apt-get）或外网下载。"
     "如果遇到缺失依赖，请使用纯 Python 或本地已有库降级实现。"
+    "如果用户询问实时信息（天气、新闻、股票），请优先调用 web_search 工具获取数据，"
+    "而不是尝试在沙箱内 curl 或 wget。"
 )
 
 _sandbox = None
@@ -625,12 +629,86 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
     return run_file_op("edit", path, old_b64, new_b64)
 
 
+_WEATHER_HINT = re.compile(r"天气|气温|温度|weather|forecast", re.I)
+_WEATHER_FILLER = re.compile(
+    r"今天|明天|现在|怎么样|如何|怎样|查询|的|天气|气温|温度|weather|forecast|what(?:'s| is)?|\bin\b|\bthe\b",
+    re.I,
+)
+
+
+def _host_get(url: str, params=None) -> requests.Response:
+    """Read a fixed public URL on the host. The sandbox has no network."""
+    response = requests.get(
+        url,
+        params=params,
+        timeout=15,
+        allow_redirects=False,
+        headers={"User-Agent": "SafeAgentStudio/1.0"},
+    )
+    response.raise_for_status()
+    return response
+
+
+def _weather_city(query: str) -> str:
+    cleaned = " ".join(_WEATHER_FILLER.sub(" ", query).split())
+    if not cleaned or len(cleaned) > 40:
+        return ""
+    if re.search(r"[/\\?#@]|^\.|\.\.", cleaned):
+        return ""
+    if not re.fullmatch(r"[\w\u4e00-\u9fff .'-]+", cleaned):
+        return ""
+    return cleaned
+
+
+def _search_duckduckgo(query: str) -> str:
+    response = _host_get(
+        "https://api.duckduckgo.com/",
+        {"q": query, "format": "json", "no_html": "1", "skip_disambig": "1"},
+    )
+    data = response.json()
+    parts = []
+    answer = data.get("Answer") or data.get("AbstractText") or ""
+    if answer:
+        parts.append(str(answer).strip())
+    lines = []
+    for topic in data.get("RelatedTopics") or []:
+        if isinstance(topic, dict) and topic.get("Text"):
+            lines.append(str(topic["Text"]).strip())
+        if len(lines) >= 5:
+            break
+    if lines:
+        parts.append("\n".join(lines))
+    return "\n\n".join(part for part in parts if part).strip()
+
+
+def run_web_search(query: str) -> str:
+    """Host-side read-only lookup. Never calls the sandbox or HITL."""
+    text = (query or "").strip()
+    if not text or len(text) > 200:
+        return "Error: query must be 1-200 characters"
+    try:
+        if _WEATHER_HINT.search(text):
+            city = _weather_city(text)
+            if not city:
+                return "Error: web_search needs a city name, for example 吉林天气"
+            body = _host_get("https://wttr.in/%s" % quote(city), {"format": "3"}).text
+            line = " ".join(body.split())
+            return line or "Error: empty weather response"
+        found = _search_duckduckgo(text)
+    except Exception as exc:
+        return tool_error(exc)
+    if not found:
+        return "Error: no search result for %s" % text
+    return found[:4000]
+
+
 # -- The dispatch map: {tool_name: handler} --
 TOOL_HANDLERS = {
     "bash":       lambda **kw: run_bash(kw["command"]),
     "read_file":  lambda **kw: run_read(kw["path"], kw.get("limit")),
     "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file":  lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
+    "web_search": lambda **kw: run_web_search(kw["query"]),
 }
 
 TOOLS = [
@@ -642,6 +720,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
     {"name": "edit_file", "description": "Replace exact text in a file under the bound sandbox /workspace.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
+    {"name": "web_search", "description": "Look up live weather, news, or stock quotes from the host. The sandbox has no network. For weather, include the city, for example 吉林天气.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
 ]
 
 

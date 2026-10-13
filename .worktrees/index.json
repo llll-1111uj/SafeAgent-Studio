@@ -1271,7 +1271,7 @@
     {
       "name": "agent-1791882993561",
       "task_id": 1791882993561,
-      "status": "active",
+      "status": "failed",
       "container_name": "sa-1791882993561-agent-1791882993561",
       "container_id": "5403b6c9c2232cda3736c882ceead393870f57eec22f88e7c96d375256fd3693",
       "image": "safeagent-sandbox:py310",
@@ -1285,12 +1285,13 @@
         "memory": "512m",
         "pids": 128
       },
-      "error": ""
+      "error": "container missing at startup reconciliation",
+      "failed_at": 1791884683.5840483
     },
     {
       "name": "agent-1791883189654",
       "task_id": 1791883189654,
-      "status": "active",
+      "status": "failed",
       "container_name": "sa-1791883189654-agent-1791883189654",
       "container_id": "66f9cd9c13dea328720e6a52df93dd54bdb67ff94417cdab9af0695cd79c7636",
       "image": "safeagent-sandbox:py310",
@@ -1304,12 +1305,13 @@
         "memory": "512m",
         "pids": 128
       },
-      "error": ""
+      "error": "container missing at startup reconciliation",
+      "failed_at": 1791884683.5840483
     },
     {
       "name": "agent-1791883389802",
       "task_id": 1791883389802,
-      "status": "active",
+      "status": "failed",
       "container_name": "sa-1791883389802-agent-1791883389802",
       "container_id": "feaaab46c138cbc4a41bbca68408a39574928719cc275e69b0209450a4deca46",
       "image": "safeagent-sandbox:py310",
@@ -1323,12 +1325,13 @@
         "memory": "512m",
         "pids": 128
       },
-      "error": ""
+      "error": "container missing at startup reconciliation",
+      "failed_at": 1791884683.5840483
     },
     {
       "name": "agent-1791883982999",
       "task_id": 1791883982999,
-      "status": "active",
+      "status": "failed",
       "container_name": "sa-1791883982999-agent-1791883982999",
       "container_id": "589a7c2ccc6000b08a2d85764087c27df48b25fb600db0d0bcbcbba30bcff02c",
       "image": "safeagent-sandbox:py310",
@@ -1337,6 +1340,26 @@
       "base_commit": "6547452072b50d3540168aa275b3f3b84a3507cf",
       "created_at": 1791883983.1780508,
       "deadline_ts": 1791885783.1780508,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "container missing at startup reconciliation",
+      "failed_at": 1791884683.5840483
+    },
+    {
+      "name": "agent-1791884685417",
+      "task_id": 1791884685417,
+      "status": "active",
+      "container_name": "sa-1791884685417-agent-1791884685417",
+      "container_id": "11d9ff8d9d3b15dca1c4675ed9824a20c414c7907ad1eb98914cc6138a6aacc3",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1791884685417",
+      "output_volume": "sa-out-1791884685417",
+      "base_commit": "80c58f21edaf252ae87ce0bac37cf7e8afebfd77",
+      "created_at": 1791884685.565327,
+      "deadline_ts": 1791886485.565327,
       "limits": {
         "cpus": 1.0,
         "memory": "512m",
