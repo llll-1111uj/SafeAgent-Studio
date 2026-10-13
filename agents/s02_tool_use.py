@@ -494,7 +494,11 @@ def agent_loop(messages: list):
                         output = handler(**block.input) if handler else "Unknown tool: %s" % block.name
                     except Exception as exc:
                         output = tool_error(exc)
-                    publish_status("tool_result", block.name, action=block.name)
+                    if isinstance(output, str) and output.startswith("Error:"):
+                        preview = output if len(output) <= 500 else output[:500] + "..."
+                        publish_status("tool_result", preview, action=block.name)
+                    else:
+                        publish_status("tool_result", block.name, action=block.name)
                     print("> %s: %s" % (block.name, output[:200]))
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
             messages.append({"role": "user", "content": results})

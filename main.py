@@ -26,6 +26,7 @@ if str(AGENTS_DIR) not in sys.path:
 
 import s02_tool_use as s02
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from reaper import SandboxReaper
@@ -376,6 +377,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SafeAgent Studio", lifespan=lifespan)
+
+# Browser calls from the Vite dev server. 3000 is the configured port; 5173 is Vite's default.
+_CORS_ORIGINS = [
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _log_routes() -> None:

@@ -4,10 +4,10 @@
   "description": "",
   "status": "completed",
   "owner": "",
-  "worktree": "agent-1791830977670",
+  "worktree": "",
   "blockedBy": [],
-  "updated_at": 1791831328.3076632,
-  "stdout": "The command was executed but hit the sandbox's 300-second timeout limit.\n\nResult: the sandbox enforces a maximum command duration of 300s, so a 600-second sleep cannot complete in a single call. The sleep was terminated at the 300s mark (the timeout error confirms the process ran and was cut off, not that it failed to start).\n\nIf you need to simulate a long task that outlives one call, options within this environment:\n\n- Chunk it: run `sleep` in ≤300s segments across multiple calls.\n- Background it: launch with `nohup python3 -c \"...\" &` so it detaches and returns immediately, then poll later.\n\nWant me to start it detached in the background instead?",
+  "updated_at": 1791878364.3639522,
+  "stdout": "The command was executed but hit the sandbox's 300-second timeout limit.\n\nResult: the sandbox enforces a maximum command duration of 300s, so a 600-second sleep cannot complete in a single call. The sleep was terminated at the 300s mark (the timeout error confirms the process ran and was cut off, not that it failed to start).\n\nIf you need to simulate a long task that outlives one call, options within this environment:\n\n- Chunk it: run `sleep` in \u2264300s segments across multiple calls.\n- Background it: launch with `nohup python3 -c \"...\" &` so it detaches and returns immediately, then poll later.\n\nWant me to start it detached in the background instead?",
   "error": "",
   "sandbox": {
     "name": "agent-1791830977670",

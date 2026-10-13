@@ -182,3 +182,16 @@
 {"event": "sandbox.create.before", "ts": 1791830977.8424482, "sandbox": {"name": "agent-1791830977670", "task_id": 1791830977670, "container_name": "sa-1791830977670-agent-1791830977670", "status": "creating"}}
 {"event": "sandbox.create.after", "ts": 1791830979.5456526, "sandbox": {"name": "agent-1791830977670", "task_id": 1791830977670, "container_name": "sa-1791830977670-agent-1791830977670", "status": "active"}}
 {"event": "sandbox.exec.timeout", "ts": 1791831326.223895, "sandbox": {"name": "agent-1791830977670", "task_id": 1791830977670, "container_name": "sa-1791830977670-agent-1791830977670", "status": "active"}}
+{"event": "sandbox.timeout", "ts": 1791878353.7227366, "sandbox": {"name": "agent-1791830977670", "task_id": 1791830977670, "container_name": "sa-1791830977670-agent-1791830977670", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791878389.0608134, "sandbox": {"name": "agent-1791878388872", "task_id": 1791878388872, "container_name": "sa-1791878388872-agent-1791878388872", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791878390.9688466, "sandbox": {"name": "agent-1791878388872", "task_id": 1791878388872, "container_name": "sa-1791878388872-agent-1791878388872", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791878515.1280806, "sandbox": {"name": "agent-1791878514965", "task_id": 1791878514965, "container_name": "sa-1791878514965-agent-1791878514965", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791878518.2810564, "sandbox": {"name": "agent-1791878514965", "task_id": 1791878514965, "container_name": "sa-1791878514965-agent-1791878514965", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791880043.6969914, "sandbox": {"name": "agent-1791880043410", "task_id": 1791880043410, "container_name": "sa-1791880043410-agent-1791880043410", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791880045.9110858, "sandbox": {"name": "agent-1791880043410", "task_id": 1791880043410, "container_name": "sa-1791880043410-agent-1791880043410", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791880588.6922464, "sandbox": {"name": "agent-1791880588622", "task_id": 1791880588622, "container_name": "sa-1791880588622-agent-1791880588622", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791880590.7836483, "sandbox": {"name": "agent-1791880588622", "task_id": 1791880588622, "container_name": "sa-1791880588622-agent-1791880588622", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791880678.5713084, "sandbox": {"name": "agent-1791880678519", "task_id": 1791880678519, "container_name": "sa-1791880678519-agent-1791880678519", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791880680.3281567, "sandbox": {"name": "agent-1791880678519", "task_id": 1791880678519, "container_name": "sa-1791880678519-agent-1791880678519", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791880880.1978347, "sandbox": {"name": "agent-1791880880144", "task_id": 1791880880144, "container_name": "sa-1791880880144-agent-1791880880144", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791880881.9897544, "sandbox": {"name": "agent-1791880880144", "task_id": 1791880880144, "container_name": "sa-1791880880144-agent-1791880880144", "status": "active"}}
