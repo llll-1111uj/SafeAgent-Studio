@@ -194,6 +194,7 @@ export function useAgentSocket() {
     approved: boolean,
     rememberSimilar: boolean,
     source: AgentMessage | null,
+    keepSandbox = false,
   ) => {
     const id = taskIdRef.current;
     const current = source || pendingRef.current;
@@ -207,7 +208,7 @@ export function useAgentSocket() {
       const response = await fetch(`${API_ORIGIN}/api/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task_id: id, approved }),
+        body: JSON.stringify({ task_id: id, approved, keep_sandbox: keepSandbox }),
       });
       if (response.status === 409 || response.status === 404) {
         setError("当前没有等待中的审批");
@@ -245,8 +246,8 @@ export function useAgentSocket() {
     }
   }, [push]);
 
-  const decide = useCallback((approved: boolean, rememberSimilar = false) => {
-    return approveCurrent(approved, rememberSimilar, null);
+  const decide = useCallback((approved: boolean, rememberSimilar = false, keepSandbox = false) => {
+    return approveCurrent(approved, rememberSimilar, null, keepSandbox);
   }, [approveCurrent]);
 
   return { taskId, running, deciding, lines, pending, error, start, decide };

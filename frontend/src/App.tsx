@@ -81,7 +81,11 @@ export default function App() {
         <div ref={bottomRef} />
       </section>
 
-      <ApprovalModal pending={pending} deciding={deciding} onDecide={(approved, rememberSimilar) => void decide(approved, rememberSimilar)} />
+      <ApprovalModal
+        pending={pending}
+        deciding={deciding}
+        onDecide={(approved, rememberSimilar, keepSandbox) => void decide(approved, rememberSimilar, keepSandbox)}
+      />
     </main>
   );
 }

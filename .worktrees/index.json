@@ -1366,6 +1366,68 @@
         "pids": 128
       },
       "error": ""
+    },
+    {
+      "name": "agent-91061",
+      "task_id": 91061,
+      "status": "removed",
+      "container_name": "sa-91061-agent-91061",
+      "container_id": "318a4a24be723bd573a68d9aa5273e3c6aaef199e02897c8e83398c49df39a10",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-91061",
+      "output_volume": "sa-out-91061",
+      "base_commit": "224ad3ebe0b88ae69e4078dd1ee57d431f966865",
+      "created_at": 1791885297.9033363,
+      "deadline_ts": 1791887097.9033363,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791885310.6548498
+    },
+    {
+      "name": "agent-91062",
+      "task_id": 91062,
+      "status": "removed",
+      "container_name": "sa-91062-agent-91062",
+      "container_id": "99d97c239bb45bfef9107ecdc6c3d49dd0431f521cbd9da67199a3b78ca26f1b",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-91062",
+      "output_volume": "sa-out-91062",
+      "base_commit": "224ad3ebe0b88ae69e4078dd1ee57d431f966865",
+      "created_at": 1791885310.929286,
+      "deadline_ts": 1791971716.1001797,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "kept_at": 1791885316.103613,
+      "volume_retain_until": 1791971716.1001797,
+      "removed_at": 1791885316.9434834
+    },
+    {
+      "name": "agent-1791885511616",
+      "task_id": 1791885511616,
+      "status": "removed",
+      "container_name": "sa-1791885511616-agent-1791885511616",
+      "container_id": "6ddb7717693628407d853d841f898cbdc91ddae34953144dec87e56b7004f27e",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1791885511616",
+      "output_volume": "sa-out-1791885511616",
+      "base_commit": "224ad3ebe0b88ae69e4078dd1ee57d431f966865",
+      "created_at": 1791885511.784998,
+      "deadline_ts": 1791887311.784998,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791885527.9195156
     }
   ]
 }

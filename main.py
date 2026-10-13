@@ -43,6 +43,7 @@ def _sandbox_name(task_id: int) -> str:
 class ApproveRequest(BaseModel):
     task_id: int = Field(..., ge=1)
     approved: bool
+    keep_sandbox: bool = False
 
 
 class RunRequest(BaseModel):
@@ -83,7 +84,11 @@ class ConnectionHub:
         loop = self._loop
         if loop is None or not loop.is_running():
             return
-        asyncio.run_coroutine_threadsafe(self._fanout(task_id, dict(payload)), loop)
+        future = asyncio.run_coroutine_threadsafe(self._fanout(task_id, dict(payload)), loop)
+        try:
+            future.result(timeout=5)
+        except Exception as exc:
+            print("[ws] publish failed task_id=%s: %s" % (task_id, exc), flush=True)
 
     async def _fanout(self, task_id: int, payload: dict) -> None:
         with self._lock:
@@ -160,6 +165,7 @@ hub = ConnectionHub()
 broker = ApprovalBroker(hub)
 _runs_lock = threading.Lock()
 _running: set[int] = set()
+_keep_tasks: set[int] = set()
 _reaper: SandboxReaper | None = None
 
 
@@ -331,6 +337,67 @@ def _assistant_stdout(messages: list) -> str:
     return "\n".join(parts)
 
 
+def _container_for_task(task_id: int) -> str:
+    task = _load_task(task_id) or {}
+    sandbox = task.get("sandbox")
+    if isinstance(sandbox, dict):
+        name = str(sandbox.get("container_name") or "").strip()
+        if name:
+            return name
+    index_path = ROOT / ".worktrees" / "index.json"
+    if not index_path.is_file():
+        return ""
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    found = ""
+    for item in data.get("sandboxes", []):
+        if item.get("task_id") != task_id:
+            continue
+        if item.get("status") not in {"creating", "active", "kept", "failed"}:
+            continue
+        container = str(item.get("container_name") or "").strip()
+        if container:
+            found = container
+    return found
+
+
+def _should_keep_sandbox(task_id: int) -> bool:
+    if task_id in _keep_tasks:
+        return True
+    task = _load_task(task_id) or {}
+    return task.get("keep") is True
+
+
+def _release_sandbox(task_id: int) -> None:
+    """Destroy the lane after the terminal status has already been pushed.
+
+    keep=True, or a HITL choice to retain the sandbox, stops the container
+    and keeps the volumes for 24 hours. Otherwise the container and both
+    volumes are removed immediately.
+    """
+    container = _container_for_task(task_id)
+    try:
+        if not container:
+            return
+        manager = s02.get_sandbox()
+        if _should_keep_sandbox(task_id):
+            saved = manager.keep_sandbox(container)
+            print(
+                "[sandbox] kept task_id=%s container=%s until=%s"
+                % (task_id, container, saved.get("volume_retain_until")),
+                flush=True,
+            )
+            return
+        manager.remove_sandbox(container, complete_task=False)
+        print("[sandbox] removed task_id=%s container=%s" % (task_id, container), flush=True)
+    except SandboxError as exc:
+        print("[sandbox] release failed task_id=%s container=%s: %s" % (task_id, container, exc), flush=True)
+    finally:
+        _keep_tasks.discard(task_id)
+
+
 def _agent_thread(task_id: int, prompt: str) -> None:
     # contextvars do not cross into a new thread. Set the id here.
     token = s02.set_task_id(task_id)
@@ -349,6 +416,7 @@ def _agent_thread(task_id: int, prompt: str) -> None:
         except (OSError, json.JSONDecodeError, SandboxError) as write_exc:
             print("[agent] failed to record task %s error: %s" % (task_id, write_exc), flush=True)
     finally:
+        _release_sandbox(task_id)
         s02.reset_task_id(token)
         with _runs_lock:
             _running.discard(task_id)
@@ -426,6 +494,12 @@ async def ws_agent(websocket: WebSocket, task_id: int) -> None:
 
 @app.post("/api/approve")
 def approve(body: ApproveRequest) -> dict:
+    if body.keep_sandbox:
+        _keep_tasks.add(body.task_id)
+        try:
+            _update_task(body.task_id, keep=True)
+        except (OSError, json.JSONDecodeError, SandboxError) as exc:
+            print("[hitl] failed to mark task %s keep: %s" % (body.task_id, exc), flush=True)
     if not broker.decide(body.task_id, body.approved):
         raise HTTPException(status_code=404, detail="no pending approval for this task")
     hub.publish(body.task_id, {
