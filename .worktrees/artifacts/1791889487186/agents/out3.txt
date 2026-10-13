@@ -1,0 +1,2 @@
+  File "w3.py", line 7
+SyntaxError: Non-UTF-8 code starting with '\xbf' in file w3.py on line 7, but no encoding declared; see http://python.org/dev/peps/pep-0263/ for details

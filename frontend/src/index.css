@@ -11,3 +11,7 @@ body,
 body {
   background: #f3f5f7;
 }
+
+.safeagent-approval {
+  z-index: 4000 !important;
+}

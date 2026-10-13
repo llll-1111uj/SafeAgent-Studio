@@ -1,0 +1,18 @@
+{
+  "id": 1791883982999,
+  "subject": "task 1791883982999",
+  "description": "",
+  "status": "completed",
+  "owner": "",
+  "worktree": "agent-1791883982999",
+  "blockedBy": [],
+  "updated_at": 1791883999.2159088,
+  "stdout": "完成。\n\n**结果说明：**\n- numpy **无需下载安装**——沙箱环境已预装，版本 **2.2.6**（符合断网约束，未尝试任何网络操作）。\n- 测试脚本已写入 `test_numpy.py`，覆盖 7 项核心功能，**7/7 全部通过**：\n\n| 测试项 | 验证内容 |\n|---|---|\n| version | 版本可读 |\n| array_creation | 数组构造、shape、dtype |\n| arithmetic | 逐元素加减乘 |\n| matrix_multiply | `@` 矩阵乘法 |\n| statistics | mean / std / max |\n| reshape | 形状变换 |\n| linear_algebra | `np.linalg.solve` 解线性方程组 |\n\n脚本自带断言与汇总，失败项会标 `[FAIL]/[ERROR]`，退出码非 0，可直接接入 CI。\n\n如果原本的诉求是\"练习安装流程\"，那需要联网环境；在当前沙箱里只能使用已装版本。需要我扩展测试（随机数、广播、切片、性能基准等）随时说。",
+  "error": "",
+  "sandbox": {
+    "name": "agent-1791883982999",
+    "container_name": "sa-1791883982999-agent-1791883982999",
+    "container_id": "589a7c2ccc6000b08a2d85764087c27df48b25fb600db0d0bcbcbba30bcff02c",
+    "status": "active"
+  }
+}

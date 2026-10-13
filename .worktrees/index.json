@@ -1475,7 +1475,7 @@
     {
       "name": "agent-1791886974946",
       "task_id": 1791886974946,
-      "status": "kept",
+      "status": "failed",
       "container_name": "sa-1791886974946-agent-1791886974946",
       "container_id": "9c9c04bda1272083c151a73e4b2330a4c4caa1626bc0b771351e3bc8554cf894",
       "image": "safeagent-sandbox:py310",
@@ -1489,9 +1489,10 @@
         "memory": "512m",
         "pids": 128
       },
-      "error": "",
+      "error": "container missing at startup reconciliation",
       "kept_at": 1791887028.1865869,
-      "volume_retain_until": 1791973428.1860309
+      "volume_retain_until": 1791973428.1860309,
+      "failed_at": 1791888907.230872
     },
     {
       "name": "agent-1791887263474",
@@ -1534,6 +1535,69 @@
       "error": "",
       "removed_at": 1791887764.5771039,
       "artifacts_dir": "D:\\shixi\\.worktrees\\artifacts\\1791887739739"
+    },
+    {
+      "name": "agent-1791888909791",
+      "task_id": 1791888909791,
+      "status": "removed",
+      "container_name": "sa-1791888909791-agent-1791888909791",
+      "container_id": "ea4e877e60f58c525ab22bfe42c6d0ad4f55f2d8518d8b9b6407e19ae0afb278",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1791888909791",
+      "output_volume": "sa-out-1791888909791",
+      "base_commit": "191f0a69fdb9f04e7616fcdcff44358d10214228",
+      "created_at": 1791888909.938027,
+      "deadline_ts": 1791890709.938027,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791888927.50722,
+      "artifacts_dir": "D:\\shixi\\.worktrees\\artifacts\\1791888909791"
+    },
+    {
+      "name": "agent-1791889396247",
+      "task_id": 1791889396247,
+      "status": "removed",
+      "container_name": "sa-1791889396247-agent-1791889396247",
+      "container_id": "bc3bb3924319d9ca88b10bebadfd2b4d1db70cedb63dbc7cbd2b376fa8f660d0",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1791889396247",
+      "output_volume": "sa-out-1791889396247",
+      "base_commit": "191f0a69fdb9f04e7616fcdcff44358d10214228",
+      "created_at": 1791889396.4060924,
+      "deadline_ts": 1791891196.4060924,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791889412.108931,
+      "artifacts_dir": "D:\\shixi\\.worktrees\\artifacts\\1791889396247"
+    },
+    {
+      "name": "agent-1791889487186",
+      "task_id": 1791889487186,
+      "status": "removed",
+      "container_name": "sa-1791889487186-agent-1791889487186",
+      "container_id": "3413cb9e93718d52d687d6cbbc2eef858ee58f5dc119e9b1f3fa88554bb585b4",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1791889487186",
+      "output_volume": "sa-out-1791889487186",
+      "base_commit": "191f0a69fdb9f04e7616fcdcff44358d10214228",
+      "created_at": 1791889487.245658,
+      "deadline_ts": 1791891287.245658,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": "",
+      "removed_at": 1791889502.1260502,
+      "artifacts_dir": "D:\\shixi\\.worktrees\\artifacts\\1791889487186"
     }
   ]
 }

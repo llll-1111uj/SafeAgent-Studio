@@ -638,7 +638,6 @@ _WEATHER_FILLER = re.compile(
 )
 
 
-_SEARCH_TIMEOUT = 5
 _SEARCH_ATTEMPTS = 2
 _SEARCH_BACKOFF = 0.5
 _SEARCH_UNAVAILABLE = (
@@ -664,7 +663,7 @@ def _search_get(url, params=None, user_agent=None):
             response = requests.get(
                 url,
                 params=params,
-                timeout=_SEARCH_TIMEOUT,
+                timeout=5,
                 allow_redirects=True,
                 headers={
                     "User-Agent": user_agent or _SEARCH_UA,
@@ -821,6 +820,27 @@ TOOLS = [
 ]
 
 
+def _final_text(content) -> str:
+    """Plain text from the assistant turn that ended the loop."""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") not in (None, "text"):
+                continue
+            text = block.get("text")
+        else:
+            if getattr(block, "type", "text") != "text":
+                continue
+            text = getattr(block, "text", None)
+        if text:
+            parts.append(str(text).strip())
+    return "\n\n".join(part for part in parts if part)
+
+
 def agent_loop(messages: list):
     try:
         while True:
@@ -831,7 +851,11 @@ def agent_loop(messages: list):
             )
             messages.append({"role": "assistant", "content": response.content})
             if response.stop_reason != "tool_use":
-                publish_status("completed", "task finished")
+                publish_status(
+                    "completed",
+                    "task finished",
+                    final_answer=_final_text(response.content),
+                )
                 return
             results = []
             for block in response.content:

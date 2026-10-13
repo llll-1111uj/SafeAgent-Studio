@@ -1,0 +1,18 @@
+{
+  "id": 1791882545518,
+  "subject": "task 1791882545518",
+  "description": "",
+  "status": "completed",
+  "owner": "",
+  "worktree": "agent-1791882545518",
+  "blockedBy": [],
+  "updated_at": 1791882561.9219267,
+  "stdout": "完成。\n\n**关于安装**：已确认 numpy 2.2.6 在沙箱中预装，无需也无法通过 `pip install` 下载（断网环境禁止网络安装）。\n\n**测试脚本** `test_numpy.py` 已创建并全部通过，覆盖：\n- 版本检查\n- 数组创建与元素运算\n- 矩阵运算（转置、矩阵乘法、行列式）\n- 统计功能（随机数均值/标准差）\n\n运行输出全部 `[PASS]`。",
+  "error": "",
+  "sandbox": {
+    "name": "agent-1791882545518",
+    "container_name": "sa-1791882545518-agent-1791882545518",
+    "container_id": "dd66c618ac0c477b2b034b0d78bed9c715f6110cd451cad4bbe0c27bfc65bad3",
+    "status": "active"
+  }
+}

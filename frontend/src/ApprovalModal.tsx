@@ -23,9 +23,14 @@ export default function ApprovalModal({ pending, deciding, onDecide }: ApprovalM
     <Modal
       title="需要您授权"
       open={pending !== null}
+      zIndex={4000}
+      getContainer={() => document.body}
+      rootClassName="safeagent-approval"
+      centered
       closable={false}
       mask={{ closable: false }}
       keyboard={false}
+      focusable={{ trap: true }}
       footer={[
         <Button key="reject" danger loading={deciding} onClick={() => onDecide(false, false, keep)}>
           拒绝

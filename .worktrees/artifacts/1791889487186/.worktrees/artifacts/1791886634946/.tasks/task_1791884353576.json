@@ -1,0 +1,12 @@
+{
+  "id": 1791884353576,
+  "subject": "task 1791884353576",
+  "description": "",
+  "status": "failed",
+  "owner": "",
+  "worktree": "",
+  "blockedBy": [],
+  "updated_at": 1791884353.6900108,
+  "stdout": "",
+  "error": "failed to list managed containers: Error response from daemon: Docker Desktop is unable to start"
+}

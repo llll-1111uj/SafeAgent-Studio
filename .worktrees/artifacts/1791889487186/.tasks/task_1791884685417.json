@@ -1,0 +1,18 @@
+{
+  "id": 1791884685417,
+  "subject": "task 1791884685417",
+  "description": "",
+  "status": "completed",
+  "owner": "",
+  "worktree": "",
+  "blockedBy": [],
+  "updated_at": 1791886496.7045102,
+  "stdout": "\u6e56\u5317\u4eca\u5929\u5929\u6c14\uff1a\u2600\ufe0f \u6674\uff0c\u6c14\u6e29\u7ea6 +25\u00b0C\u3002\n\n\u5982\u9700\u5177\u4f53\u57ce\u5e02\uff08\u5982\u6b66\u6c49\u3001\u5b9c\u660c\u3001\u8944\u9633\u7b49\uff09\u7684\u8be6\u7ec6\u9884\u62a5\uff0c\u6216\u672a\u6765\u51e0\u5929\u8d8b\u52bf\uff0c\u544a\u8bc9\u6211\u57ce\u5e02\u540d\u6211\u518d\u5e2e\u4f60\u67e5\u3002",
+  "error": "",
+  "sandbox": {
+    "name": "agent-1791884685417",
+    "container_name": "sa-1791884685417-agent-1791884685417",
+    "container_id": "11d9ff8d9d3b15dca1c4675ed9824a20c414c7907ad1eb98914cc6138a6aacc3",
+    "status": "active"
+  }
+}

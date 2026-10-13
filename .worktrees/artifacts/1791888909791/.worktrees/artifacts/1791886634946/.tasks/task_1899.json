@@ -1,0 +1,12 @@
+{
+  "id": 1899,
+  "subject": "task 1899",
+  "description": "",
+  "status": "failed",
+  "owner": "",
+  "worktree": "",
+  "blockedBy": [],
+  "updated_at": 1791824777.1888614,
+  "stdout": "",
+  "error": "active sandbox limit reached (4)"
+}

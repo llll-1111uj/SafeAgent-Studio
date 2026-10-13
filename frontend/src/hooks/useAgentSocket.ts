@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://127.0.0.1:8000";
-const DONE = new Set(["completed", "error"]);
 
 export type AgentMessage = {
   status?: string;
@@ -10,7 +9,10 @@ export type AgentMessage = {
   args?: string;
   message?: string;
   ui?: string;
+  final_answer?: string;
 };
+
+export type ResultPhase = "idle" | "running" | "approval" | "completed" | "error";
 
 export type LogLine = {
   key: number;
@@ -81,6 +83,9 @@ export function useAgentSocket() {
   const [running, setRunning] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const [lines, setLines] = useState<LogLine[]>([]);
+  const [phase, setPhase] = useState<ResultPhase>("idle");
+  const [spinning, setSpinning] = useState(false);
+  const [finalAnswer, setFinalAnswer] = useState("");
   const [pending, setPending] = useState<AgentMessage | null>(null);
   const [error, setError] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
@@ -118,6 +123,9 @@ export function useAgentSocket() {
     setError("");
     setPending(null);
     setLines([]);
+    setPhase("running");
+    setSpinning(true);
+    setFinalAnswer("");
     lineKey.current = 0;
     setTaskId(id);
     taskIdRef.current = id;
@@ -129,6 +137,8 @@ export function useAgentSocket() {
       socket = await openSocket(id);
     } catch (err) {
       setRunning(false);
+      setSpinning(false);
+      setPhase("error");
       setError(err instanceof Error ? err.message : "WebSocket 连接失败");
       return;
     }
@@ -142,17 +152,37 @@ export function useAgentSocket() {
         return;
       }
       push(payload);
+      if (payload.status === "thinking" || payload.status === "tool_call" || payload.status === "tool_result") {
+        setSpinning(true);
+        setPhase((current) => (current === "approval" || current === "completed" || current === "error" ? current : "running"));
+      }
       if (payload.status === "pending_approval") {
         const action = payload.action || "";
+        setSpinning(true);
         if (action && autoActionsRef.current.has(action)) {
           void approveCurrent(true, false, payload);
           return;
         }
         pendingRef.current = payload;
         setPending(payload);
+        setPhase("approval");
         return;
       }
-      if (payload.status && DONE.has(payload.status)) {
+      if (payload.status === "completed") {
+        setSpinning(false);
+        setPending(null);
+        pendingRef.current = null;
+        setPhase("completed");
+        setFinalAnswer(payload.final_answer || "");
+        setRunning(false);
+        socket.close();
+        return;
+      }
+      if (payload.status === "error") {
+        setSpinning(false);
+        setPending(null);
+        pendingRef.current = null;
+        setPhase("error");
         setRunning(false);
         socket.close();
       }
@@ -172,12 +202,16 @@ export function useAgentSocket() {
       });
       if (response.status === 409) {
         setError("任务已在运行");
+        setPhase("error");
+        setSpinning(false);
         socket.close();
         setRunning(false);
         return;
       }
       if (!response.ok) {
         setError(await readDetail(response));
+        setPhase("error");
+        setSpinning(false);
         socket.close();
         setRunning(false);
         return;
@@ -185,6 +219,8 @@ export function useAgentSocket() {
       push({ status: "started", message: `任务 ${id} 已启动` });
     } catch (err) {
       setError(err instanceof Error ? err.message : "启动任务失败");
+      setPhase("error");
+      setSpinning(false);
       socket.close();
       setRunning(false);
     }
@@ -236,6 +272,8 @@ export function useAgentSocket() {
       if (pendingRef.current === current) {
         pendingRef.current = null;
         setPending(null);
+        setPhase("running");
+        setSpinning(true);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "审批请求失败");
@@ -250,5 +288,5 @@ export function useAgentSocket() {
     return approveCurrent(approved, rememberSimilar, null, keepSandbox);
   }, [approveCurrent]);
 
-  return { taskId, running, deciding, lines, pending, error, start, decide };
+  return { taskId, running, deciding, spinning, lines, phase, finalAnswer, pending, error, start, decide };
 }

@@ -1,0 +1,18 @@
+{
+  "id": 2090,
+  "subject": "task 2090",
+  "description": "",
+  "status": "in_progress",
+  "owner": "",
+  "worktree": "agent-2090",
+  "blockedBy": [],
+  "updated_at": 1791825344.7087314,
+  "stdout": "",
+  "error": "",
+  "sandbox": {
+    "name": "agent-2090",
+    "container_name": "sa-2090-agent-2090",
+    "container_id": "89605e1c2ea2a3a20de410e4a860b23f7d5166e52166dd6c55cef9899545d706",
+    "status": "active"
+  }
+}

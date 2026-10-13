@@ -1,0 +1,18 @@
+{
+  "id": 1791878514965,
+  "subject": "task 1791878514965",
+  "description": "",
+  "status": "completed",
+  "owner": "",
+  "worktree": "agent-1791878514965",
+  "blockedBy": [],
+  "updated_at": 1791878520.0177932,
+  "stdout": "I can't read that path. The sandbox is bound at `/workspace`, and reads are restricted to files under it — `../../Windows/System32/drivers/etc/hosts` resolves outside the sandbox, and it's a Windows system path anyway (this is a Linux-style sandbox).\n\nIf you meant something inside the workspace, give me the path relative to `/workspace` and I'll read it.",
+  "error": "",
+  "sandbox": {
+    "name": "agent-1791878514965",
+    "container_name": "sa-1791878514965-agent-1791878514965",
+    "container_id": "3096eb08652e073b9b23c960c95019d35e0a0b737c4a355a02a63338e198d4db",
+    "status": "active"
+  }
+}

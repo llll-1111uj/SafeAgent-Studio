@@ -1,0 +1,3 @@
+{"task_id": 1001, "name": "test-fail", "base_ref": "NON_EXISTENT_BRANCH", "status": "failed", "error": "command failed (128): git -C D:\\shixi rev-parse: fatal: Needed a single revision", "time": 1791740244.3080258}
+{"task_id": 1001, "name": "test-fail", "base_ref": "NON_EXISTENT_BRANCH", "status": "failed", "error": "command failed (128): git -C D:\\shixi rev-parse: fatal: Needed a single revision", "time": 1791740322.584058}
+{"task_id": 1001, "name": "test-fail", "base_ref": "NON_EXISTENT_BRANCH", "status": "failed", "error": "command failed (128): git -C D:\\shixi rev-parse: fatal: Needed a single revision", "time": 1791740372.7359507}

@@ -1,0 +1,151 @@
+import subprocess
+import json
+import os
+from datetime import datetime
+from typing import Dict, Optional, List
+
+
+def run_cmd(argv: List[str]) -> str:
+    """安全执行外部命令，不开启shell"""
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"命令失败 {' '.join(argv)}\nstderr: {e.stderr}") from e
+
+
+class SandboxManager:
+    def __init__(self, index_path: str = ".worktrees/sandbox_index.json"):
+        self.index_path = index_path
+        # 确保目录存在
+        os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
+
+    def load_index(self) -> Dict:
+        """加载索引，不存在返回空字典"""
+        if not os.path.exists(self.index_path):
+            return {}
+        with open(self.index_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def save_index(self, idx: Dict):
+        """保存索引文件"""
+        with open(self.index_path, "w", encoding="utf-8") as f:
+            json.dump(idx, f, indent=2, ensure_ascii=False)
+
+    def start_sandbox(self, task_id: str) -> str:
+        """
+        启动沙箱：创建2个volume + 启动容器
+        任何步骤异常，自动回滚清理已创建资源
+        返回 container_id
+        """
+        index = self.load_index()
+        if task_id in index:
+            raise RuntimeError(f"task {task_id} 沙箱已存在")
+
+        container_name = f"sa-{task_id}"
+        vol_ws = f"sa-ws-{task_id}"
+        vol_out = f"sa-out-{task_id}"
+
+        created_resources = {
+            "volume_ws": False,
+            "volume_out": False,
+            "container_id": None
+        }
+
+        try:
+            # 1. 创建ws卷
+            run_cmd(["docker", "volume", "create", vol_ws])
+            created_resources["volume_ws"] = True
+
+            # 2. 创建out卷
+            run_cmd(["docker", "volume", "create", vol_out])
+            created_resources["volume_out"] = True
+
+            # 3. 启动容器，使用命名卷；基础镜像用alpine做演示
+            container_id = run_cmd([
+                "docker", "run", "-d",
+                "--name", container_name,
+                "-v", f"{vol_ws}:/workspace",
+                "-v", f"{vol_out}:/output",
+                "--rm",
+                "alpine",
+                "sleep", "300"  # 容器保持运行5分钟
+            ])
+            created_resources["container_id"] = container_id
+
+            # 写入索引
+            index[task_id] = {
+                "container_name": container_name,
+                "container_id": container_id,
+                "ws_volume": vol_ws,
+                "out_volume": vol_out,
+                "created_at": datetime.now().isoformat()
+            }
+            self.save_index(index)
+            print(f"✅ 沙箱启动成功 task={task_id}, container_id={container_id}")
+            return container_id
+
+        except Exception as err:
+            print(f"❌ 创建沙箱失败，开始回滚清理: {err}")
+            # 逆序清理：容器 → out卷 → ws卷
+            if created_resources["container_id"]:
+                try:
+                    run_cmd(["docker", "rm", "-f", container_name])
+                except Exception as e:
+                    print(f"清理容器警告: {e}")
+            if created_resources["volume_out"]:
+                try:
+                    run_cmd(["docker", "volume", "rm", "-f", vol_out])
+                except Exception as e:
+                    print(f"删除out卷警告: {e}")
+            if created_resources["volume_ws"]:
+                try:
+                    run_cmd(["docker", "volume", "rm", "-f", vol_ws])
+                except Exception as e:
+                    print(f"删除ws卷警告: {e}")
+            raise err
+
+    def stop_sandbox(self, task_id: str):
+        """停止沙箱，删除容器+卷，从索引移除记录"""
+        index = self.load_index()
+        if task_id not in index:
+            print(f"task {task_id} 在索引中不存在")
+            return
+
+        rec = index[task_id]
+        container_name = rec["container_name"]
+        vol_ws = rec["ws_volume"]
+        vol_out = rec["out_volume"]
+
+        # 停止并删除容器
+        try:
+            run_cmd(["docker", "stop", "-t", "10", container_name])
+        except Exception as e:
+            print(f"stop容器警告: {e}")
+        run_cmd(["docker", "rm", "-f", container_name])
+
+        # 删除卷
+        run_cmd(["docker", "volume", "rm", "-f", vol_out])
+        run_cmd(["docker", "volume", "rm", "-f", vol_ws])
+
+        # 更新索引
+        del index[task_id]
+        self.save_index(index)
+        print(f"✅ task {task_id} 沙箱资源全部清理完成")
+
+
+if __name__ == "__main__":
+    # 自测代码
+    manager = SandboxManager()
+    test_task = "12-auth-refactor"
+    try:
+        cid = manager.start_sandbox(test_task)
+        print(f"容器ID: {cid}")
+        input("按回车停止沙箱...")
+    finally:
+        manager.stop_sandbox(test_task)

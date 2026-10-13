@@ -1,0 +1,18 @@
+{
+  "id": 1575,
+  "subject": "task 1575",
+  "description": "",
+  "status": "in_progress",
+  "owner": "",
+  "worktree": "agent-1575",
+  "blockedBy": [],
+  "updated_at": 1791828386.4518838,
+  "stdout": "",
+  "error": "",
+  "sandbox": {
+    "name": "agent-1575",
+    "container_name": "sa-1575-agent-1575",
+    "container_id": "3b9a778112fc21140256158a624e2a7855befc8499600b8852ecd1b538924ec3",
+    "status": "active"
+  }
+}

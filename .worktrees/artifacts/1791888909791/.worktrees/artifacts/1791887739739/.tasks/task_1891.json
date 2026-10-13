@@ -1,0 +1,18 @@
+{
+  "id": 1891,
+  "subject": "task 1891",
+  "description": "",
+  "status": "completed",
+  "owner": "",
+  "worktree": "agent-1891",
+  "blockedBy": [],
+  "updated_at": 1791824717.8517866,
+  "stdout": "已执行，输出为 `123`。",
+  "error": "",
+  "sandbox": {
+    "name": "agent-1891",
+    "container_name": "sa-1891-agent-1891",
+    "container_id": "99bc0ef4de3d63689a47e91a06a4b76a639131039c26a28ff8176b113a2ebfd4",
+    "status": "active"
+  }
+}

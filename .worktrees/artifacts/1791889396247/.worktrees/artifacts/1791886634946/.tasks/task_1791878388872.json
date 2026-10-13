@@ -1,0 +1,18 @@
+{
+  "id": 1791878388872,
+  "subject": "task 1791878388872",
+  "description": "",
+  "status": "failed",
+  "owner": "",
+  "worktree": "agent-1791878388872",
+  "blockedBy": [],
+  "updated_at": 1791878392.4374435,
+  "stdout": "",
+  "error": "Error: Connection error.",
+  "sandbox": {
+    "name": "agent-1791878388872",
+    "container_name": "sa-1791878388872-agent-1791878388872",
+    "container_id": "6aa0ea5784ab5003655f4a7ba768efe163ef19ed5f01f05d598a548d8868bb48",
+    "status": "active"
+  }
+}

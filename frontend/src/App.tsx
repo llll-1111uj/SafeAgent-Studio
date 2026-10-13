@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Input, Typography } from "antd";
+import { Alert, Button, Input, Spin, Typography } from "antd";
 import ApprovalModal from "./ApprovalModal";
+import ResultCard from "./ResultCard";
 import { useAgentSocket } from "./hooks/useAgentSocket";
 
 const TONE: Record<string, string> = {
@@ -18,15 +19,19 @@ const TONE: Record<string, string> = {
 
 export default function App() {
   const [prompt, setPrompt] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const { taskId, running, deciding, lines, pending, error, start, decide } = useAgentSocket();
+  const logRef = useRef<HTMLDivElement>(null);
+  const { taskId, running, deciding, spinning, lines, phase, finalAnswer, pending, error, start, decide } = useAgentSocket();
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [lines]);
+    const node = logRef.current;
+    if (!node) {
+      return;
+    }
+    node.scrollTop = node.scrollHeight;
+  }, [lines, finalAnswer]);
 
   return (
-    <main className="mx-auto flex h-svh max-w-5xl flex-col gap-4 overflow-hidden px-4 py-6">
+    <main className="mx-auto flex h-svh max-w-5xl flex-col gap-3 overflow-hidden px-4 py-4">
       <header>
         <Typography.Title level={3} className="!mb-1">
           SafeAgent Studio
@@ -41,20 +46,20 @@ export default function App() {
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           placeholder="请输入你的 Prompt"
-          autoSize={{ minRows: 3, maxRows: 8 }}
+          autoSize={{ minRows: 2, maxRows: 4 }}
           disabled={running}
         />
         <div className="flex items-center gap-3">
           <Button
             type="primary"
-            loading={running}
-            disabled={!prompt.trim()}
+            disabled={!prompt.trim() || running}
             onClick={() => {
               void start(prompt);
             }}
           >
             启动任务
           </Button>
+          {spinning ? <Spin size="small" aria-label="正在处理" /> : null}
           {taskId !== null ? (
             <Typography.Text type="secondary">任务 {taskId}</Typography.Text>
           ) : null}
@@ -62,10 +67,16 @@ export default function App() {
         {error ? <Alert type="error" showIcon message={error} /> : null}
       </section>
 
+      <ResultCard phase={phase} answer={finalAnswer} />
+
       <section
         aria-label="终端日志"
-        className="min-h-0 flex-1 overflow-y-auto rounded-lg bg-slate-950 p-4 font-mono text-sm leading-6"
+        className="flex h-32 shrink-0 flex-col overflow-hidden rounded-lg bg-slate-950"
       >
+        <p className="m-0 border-b border-slate-800 px-4 py-2 text-xs tracking-wide text-slate-400">
+          技术日志
+        </p>
+        <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 font-mono text-sm leading-6">
         {lines.length === 0 ? (
           <p className="m-0 text-slate-500">等待任务输出…</p>
         ) : (
@@ -78,7 +89,7 @@ export default function App() {
             </p>
           ))
         )}
-        <div ref={bottomRef} />
+        </div>
       </section>
 
       <ApprovalModal
