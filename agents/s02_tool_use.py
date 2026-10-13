@@ -24,6 +24,8 @@ import json
 import os
 import re
 import shlex
+import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
@@ -636,17 +638,48 @@ _WEATHER_FILLER = re.compile(
 )
 
 
-def _host_get(url: str, params=None) -> requests.Response:
-    """Read a fixed public URL on the host. The sandbox has no network."""
-    response = requests.get(
-        url,
-        params=params,
-        timeout=15,
-        allow_redirects=False,
-        headers={"User-Agent": "SafeAgentStudio/1.0"},
-    )
-    response.raise_for_status()
-    return response
+_SEARCH_TIMEOUT = 5
+_SEARCH_ATTEMPTS = 2
+_SEARCH_BACKOFF = 0.5
+_SEARCH_UNAVAILABLE = (
+    "Error: Web search service is unavailable. "
+    "Please try to use local tools to find the answer."
+)
+_SEARCH_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
+def _search_get(url, params=None, user_agent=None):
+    """GET on the host with a short timeout and exponential backoff.
+
+    The sandbox has no network. Two attempts, 5 seconds each. The wait
+    between them starts at 0.5s and doubles, so a dead host fails quickly.
+    """
+    delay = _SEARCH_BACKOFF
+    last = None
+    for attempt in range(_SEARCH_ATTEMPTS):
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                timeout=_SEARCH_TIMEOUT,
+                allow_redirects=True,
+                headers={
+                    "User-Agent": user_agent or _SEARCH_UA,
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                },
+            )
+            response.raise_for_status()
+            return response
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last = exc
+            if attempt + 1 >= _SEARCH_ATTEMPTS:
+                raise
+            time.sleep(delay)
+            delay *= 2
+    raise last
 
 
 def _weather_city(query: str) -> str:
@@ -660,25 +693,85 @@ def _weather_city(query: str) -> str:
     return cleaned
 
 
-def _search_duckduckgo(query: str) -> str:
-    response = _host_get(
-        "https://api.duckduckgo.com/",
-        {"q": query, "format": "json", "no_html": "1", "skip_disambig": "1"},
+def _local_name(tag):
+    if not isinstance(tag, str):
+        return ""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _strip_tags(html):
+    text = re.sub(r"(?is)<script[\s\S]*?</script>", " ", html or "")
+    text = re.sub(r"(?is)<style[\s\S]*?</style>", " ", text)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    return " ".join(text.split())
+
+
+def _search_bing(query):
+    """Bing China RSS. Reachable from the host without a proxy."""
+    response = _search_get(
+        "https://cn.bing.com/search",
+        {"q": query, "format": "rss", "count": "5"},
     )
-    data = response.json()
-    parts = []
-    answer = data.get("Answer") or data.get("AbstractText") or ""
-    if answer:
-        parts.append(str(answer).strip())
+    try:
+        root = ET.fromstring(response.content)
+    except ET.ParseError:
+        return ""
     lines = []
-    for topic in data.get("RelatedTopics") or []:
-        if isinstance(topic, dict) and topic.get("Text"):
-            lines.append(str(topic["Text"]).strip())
+    for node in root.iter():
+        if _local_name(node.tag) != "item":
+            continue
+        title = ""
+        description = ""
+        for child in list(node):
+            name = _local_name(child.tag)
+            value = " ".join((child.text or "").split())
+            if name == "title":
+                title = value
+            elif name == "description":
+                description = _strip_tags(value)
+        line = title
+        if description and description != title:
+            line = "%s — %s" % (title, description[:180])
+        if line:
+            lines.append(line)
         if len(lines) >= 5:
             break
-    if lines:
-        parts.append("\n".join(lines))
-    return "\n\n".join(part for part in parts if part).strip()
+    return "\n".join(lines)
+
+
+def _search_baidu(query):
+    """Baidu result titles. Used only when Bing China did not answer."""
+    response = _search_get(
+        "https://www.baidu.com/s",
+        {"wd": query, "rn": "5", "ie": "utf-8"},
+    )
+    titles = re.findall(r"(?is)<h3[^>]*>(.*?)</h3>", response.text or "")
+    lines = []
+    for raw in titles:
+        title = _strip_tags(raw)
+        if title and title not in lines:
+            lines.append(title)
+        if len(lines) >= 5:
+            break
+    return "\n".join(lines)
+
+
+def _search_web(query):
+    network_failures = 0
+    sources = (_search_bing, _search_baidu)
+    for search in sources:
+        try:
+            found = search(query)
+        except (requests.Timeout, requests.ConnectionError):
+            network_failures += 1
+            continue
+        except requests.RequestException:
+            continue
+        if found:
+            return found[:4000]
+    if network_failures == len(sources):
+        return _SEARCH_UNAVAILABLE
+    return "Error: no search result for %s" % query
 
 
 def run_web_search(query: str) -> str:
@@ -691,15 +784,18 @@ def run_web_search(query: str) -> str:
             city = _weather_city(text)
             if not city:
                 return "Error: web_search needs a city name, for example 吉林天气"
-            body = _host_get("https://wttr.in/%s" % quote(city), {"format": "3"}).text
+            body = _search_get(
+                "https://wttr.in/%s" % quote(city),
+                {"format": "3"},
+                user_agent="curl/8.0.0",
+            ).text
             line = " ".join(body.split())
             return line or "Error: empty weather response"
-        found = _search_duckduckgo(text)
+        return _search_web(text)
+    except (requests.Timeout, requests.ConnectionError):
+        return _SEARCH_UNAVAILABLE
     except Exception as exc:
         return tool_error(exc)
-    if not found:
-        return "Error: no search result for %s" % text
-    return found[:4000]
 
 
 # -- The dispatch map: {tool_name: handler} --
@@ -720,7 +816,7 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
     {"name": "edit_file", "description": "Replace exact text in a file under the bound sandbox /workspace.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
-    {"name": "web_search", "description": "Look up live weather, news, or stock quotes from the host. The sandbox has no network. For weather, include the city, for example 吉林天气.",
+    {"name": "web_search", "description": "Look up live weather, news, or stock quotes from the host via Bing China, with Baidu as fallback. The sandbox has no network. For weather, include the city, for example 吉林天气.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
 ]
 

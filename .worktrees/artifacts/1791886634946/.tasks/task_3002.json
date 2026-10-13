@@ -1,0 +1,18 @@
+{
+  "id": 3002,
+  "subject": "task 3002",
+  "description": "",
+  "status": "in_progress",
+  "owner": "",
+  "worktree": "agent-3002",
+  "blockedBy": [],
+  "updated_at": 1791826768.03689,
+  "stdout": "",
+  "error": "",
+  "sandbox": {
+    "name": "agent-3002",
+    "container_name": "sa-3002-agent-3002",
+    "container_id": "029f578fbd47cbf8c745040248a07c3106c9e5e8e1641acbd6f4c9201a3404b1",
+    "status": "active"
+  }
+}

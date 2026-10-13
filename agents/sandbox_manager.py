@@ -16,6 +16,7 @@ import copy
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -297,12 +298,96 @@ class SandboxManager:
         self._emit("sandbox.keep", saved)
         return saved
 
+    def _export_artifacts(self, container_name: str, task_id: int, workspace_volume: str) -> str:
+        """Copy /workspace onto the host before the container is deleted.
+
+        A running lane is packed with docker exec. A stopped lane is packed
+        from its workspace volume. Either way the host receives the tree at
+        .worktrees/artifacts/{task_id}/, without .git or __pycache__.
+        Returns "" when there is nothing left to copy.
+        """
+        if self._container_running(container_name):
+            pack_cmd = [
+                "docker", "exec", "-u", "1000:1000", container_name,
+                "tar", "--exclude=.git", "--exclude=__pycache__",
+                "-C", "/workspace", "-cf", "-", ".",
+            ]
+        elif workspace_volume and self._volume_exists(workspace_volume):
+            pack_cmd = [
+                "docker", "run", "--rm", "--network=none",
+                "-v", f"{workspace_volume}:/workspace:ro",
+                "--entrypoint", "tar", self.image,
+                "--exclude=.git", "--exclude=__pycache__",
+                "-C", "/workspace", "-cf", "-", ".",
+            ]
+        else:
+            return ""
+
+        dest = self.repo_root / ".worktrees" / "artifacts" / str(task_id)
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir(parents=True)
+        self._pipe_tar(pack_cmd, dest)
+        print("[sandbox] artifacts task_id=%s dir=%s" % (task_id, dest), flush=True)
+        return str(dest)
+
+    def _pipe_tar(self, pack_cmd: list[str], dest: Path) -> None:
+        """Stream a tar producer into the host tar extractor. No shell pipe."""
+        pack = subprocess.Popen(
+            pack_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+        )
+        extract: subprocess.Popen[bytes] | None = None
+        try:
+            if pack.stdout is None or pack.stderr is None:
+                raise SandboxError("artifact tar did not provide pipes")
+            extract = subprocess.Popen(
+                ["tar", "-xf", "-", "-C", str(dest)],
+                stdin=pack.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+            )
+            pack.stdout.close()
+            pack_err: list[bytes] = []
+
+            def _drain_pack_stderr() -> None:
+                assert pack.stderr is not None
+                pack_err.append(pack.stderr.read())
+
+            drainer = threading.Thread(target=_drain_pack_stderr, daemon=True)
+            drainer.start()
+            try:
+                _out, extract_err = extract.communicate(timeout=180)
+            except subprocess.TimeoutExpired as exc:
+                extract.kill()
+                pack.kill()
+                extract.communicate()
+                raise SandboxError("timed out exporting workspace artifacts") from exc
+            finally:
+                drainer.join(timeout=30)
+            pack.wait(timeout=30)
+            if pack.returncode != 0 or extract.returncode != 0:
+                detail = _clip(b"".join(pack_err)) + " " + _clip(extract_err)
+                raise SandboxError(f"artifact export failed: {detail.strip()}")
+        finally:
+            if pack.poll() is None:
+                pack.kill()
+                pack.wait(timeout=10)
+            if extract is not None and extract.poll() is None:
+                extract.kill()
+                extract.wait(timeout=10)
+
     def remove_sandbox(self, sandbox_id: str, force: bool = False, *, complete_task: bool = False) -> dict:
-        """Stop, delete the container and both volumes, then mark the index removed.
+        """Export /workspace, then stop, delete the container and both volumes.
 
         sandbox_id may be the container name sa-{task_id}-{name}, or the
         sandbox name itself, such as agent-999. Transition:
         active|kept|failed|creating -> removing -> removed.
+        Artifacts are copied to .worktrees/artifacts/{task_id}/ before the
+        container is stopped. .git and __pycache__ are left behind.
         docker stop -t 10 is followed by docker rm -f even when stop fails.
         force is kept for existing callers. complete_task=True marks the task completed.
         """
@@ -315,6 +400,11 @@ class SandboxManager:
         if previous not in {"creating", "active", "kept", "failed", "removing"}:
             raise SandboxError(f"cannot remove sandbox from status {previous}")
 
+        artifacts_dir = self._export_artifacts(
+            sandbox_id,
+            task_id,
+            str(entry.get("workspace_volume") or ""),
+        )
         self._emit("sandbox.remove.before", entry)
         if previous != "removing":
             entry = self._mutate(lambda data: self._transition(data, sandbox_id, "removing", extra={"error": ""}))
@@ -344,12 +434,15 @@ class SandboxManager:
             )
 
         try:
+            removed_extra: dict = {"removed_at": time.time(), "error": ""}
+            if artifacts_dir:
+                removed_extra["artifacts_dir"] = artifacts_dir
             saved = self._mutate(
                 lambda data: self._transition(
                     data,
                     sandbox_id,
                     "removed",
-                    extra={"removed_at": time.time(), "error": ""},
+                    extra=removed_extra,
                 )
             )
         except Exception as exc:

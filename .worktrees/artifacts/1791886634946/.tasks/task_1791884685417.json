@@ -1,0 +1,18 @@
+{
+  "id": 1791884685417,
+  "subject": "task 1791884685417",
+  "description": "",
+  "status": "completed",
+  "owner": "",
+  "worktree": "agent-1791884685417",
+  "blockedBy": [],
+  "updated_at": 1791884690.4355373,
+  "stdout": "湖北今天天气：☀️ 晴，气温约 +25°C。\n\n如需具体城市（如武汉、宜昌、襄阳等）的详细预报，或未来几天趋势，告诉我城市名我再帮你查。",
+  "error": "",
+  "sandbox": {
+    "name": "agent-1791884685417",
+    "container_name": "sa-1791884685417-agent-1791884685417",
+    "container_id": "11d9ff8d9d3b15dca1c4675ed9824a20c414c7907ad1eb98914cc6138a6aacc3",
+    "status": "active"
+  }
+}
