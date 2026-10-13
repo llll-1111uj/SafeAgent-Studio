@@ -21,6 +21,9 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
       git ca-certificates procps coreutils util-linux passwd; \
     rm -rf /var/lib/apt/lists/*; \
+    pip install --no-cache-dir \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple \
+      numpy pandas requests scipy matplotlib pytest; \
     if ! id -u 1000 >/dev/null 2>&1; then \
       useradd --uid 1000 --create-home --shell /bin/sh sandbox; \
     fi

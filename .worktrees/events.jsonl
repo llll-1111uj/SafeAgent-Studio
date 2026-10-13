@@ -195,3 +195,10 @@
 {"event": "sandbox.create.after", "ts": 1791880680.3281567, "sandbox": {"name": "agent-1791880678519", "task_id": 1791880678519, "container_name": "sa-1791880678519-agent-1791880678519", "status": "active"}}
 {"event": "sandbox.create.before", "ts": 1791880880.1978347, "sandbox": {"name": "agent-1791880880144", "task_id": 1791880880144, "container_name": "sa-1791880880144-agent-1791880880144", "status": "creating"}}
 {"event": "sandbox.create.after", "ts": 1791880881.9897544, "sandbox": {"name": "agent-1791880880144", "task_id": 1791880880144, "container_name": "sa-1791880880144-agent-1791880880144", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791881576.4760556, "sandbox": {"name": "agent-1791881576296", "task_id": 1791881576296, "container_name": "sa-1791881576296-agent-1791881576296", "status": "creating"}}
+{"event": "sandbox.create.before", "ts": 1791881624.207428, "sandbox": {"name": "agent-1791881624053", "task_id": 1791881624053, "container_name": "sa-1791881624053-agent-1791881624053", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791881625.9957163, "sandbox": {"name": "agent-1791881624053", "task_id": 1791881624053, "container_name": "sa-1791881624053-agent-1791881624053", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791882545.667738, "sandbox": {"name": "agent-1791882545518", "task_id": 1791882545518, "container_name": "sa-1791882545518-agent-1791882545518", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791882547.4984727, "sandbox": {"name": "agent-1791882545518", "task_id": 1791882545518, "container_name": "sa-1791882545518-agent-1791882545518", "status": "active"}}
+{"event": "sandbox.create.before", "ts": 1791882993.7060895, "sandbox": {"name": "agent-1791882993561", "task_id": 1791882993561, "container_name": "sa-1791882993561-agent-1791882993561", "status": "creating"}}
+{"event": "sandbox.create.after", "ts": 1791882995.5427585, "sandbox": {"name": "agent-1791882993561", "task_id": 1791882993561, "container_name": "sa-1791882993561-agent-1791882993561", "status": "active"}}

@@ -63,7 +63,10 @@ target = (root / rel).resolve()
 try:
     target.relative_to(root)
 except ValueError:
-    sys.stderr.write("path escapes /workspace\n")
+    sys.stderr.write(
+        "Absolute paths are not allowed. Please use a relative path inside "
+        "/workspace (e.g., 'test.py' or './src/test.py').\n"
+    )
     raise SystemExit(1)
 if op == "read":
     raw_limit = sys.argv[3] if len(sys.argv) > 3 else ""
@@ -123,6 +126,10 @@ def set_status_publisher(publisher) -> None:
 def tool_error(exc: BaseException) -> str:
     """Error text safe to send back as a model tool_result."""
     text = str(exc)
+    if "Absolute paths are not allowed" in text:
+        if text.startswith("Error:"):
+            return text
+        return "Error: " + text
     secrets = []
     try:
         secrets.append(str(WORKDIR))
@@ -219,12 +226,18 @@ def require_bound_sandbox() -> str:
     return match["container_name"]
 
 
+_PATH_HINT = (
+    "Absolute paths are not allowed. Please use a relative path inside "
+    "/workspace (e.g., 'test.py' or './src/test.py')."
+)
+
+
 def workspace_rel(path: str) -> str:
     if not path or path.startswith(("/", "\\")) or (len(path) >= 2 and path[1] == ":"):
-        raise ValueError("path must stay inside /workspace")
+        raise ValueError(_PATH_HINT)
     parts = Path(path).parts
     if Path(path).is_absolute() or ".." in parts:
-        raise ValueError(f"path escapes /workspace: {path}")
+        raise ValueError(_PATH_HINT)
     return path.replace("\\", "/")
 
 
@@ -287,7 +300,6 @@ _FIND_WRITERS = frozenset({
     "-exec", "-execdir", "-ok", "-okdir", "-delete",
     "-fls", "-fprint", "-fprint0", "-fprintf",
 })
-_STDERR_NULL = "2>/dev/null"
 
 
 def _split_unquoted(text: str, sep: str):
@@ -365,14 +377,11 @@ def _strip_readonly_syntax(segment: str):
             continue
         if ch == "\\":
             return None
-        if segment.startswith(_STDERR_NULL, i):
-            before_ok = i == 0 or segment[i - 1].isspace()
-            after = i + len(_STDERR_NULL)
-            after_ok = after == n or segment[after].isspace()
-            if before_ok and after_ok:
-                out.append(" ")
-                i = after
-                continue
+        redirect_at = _allowed_redirect_end(segment, i)
+        if redirect_at is not None:
+            out.append(" ")
+            i = redirect_at
+            continue
         if ch in ";&`<>$" or segment.startswith("$(", i):
             return None
         out.append(ch)
@@ -380,6 +389,144 @@ def _strip_readonly_syntax(segment: str):
     if quote:
         return None
     return "".join(out)
+
+
+_PYTHON = frozenset({"python", "python3"})
+_PYTHON_FLAGS = frozenset({"-u", "-B", "-E", "-s", "-I", "-q"})
+_MUTATING = re.compile(
+    r"(?<![\w])(?:pip3?\s+install|apt-get|apt\s+install|wget|curl|rm)(?![\w])"
+)
+_ALLOWED_REDIRECTS = ("2>/dev/null", ">/dev/null", "1>/dev/null", "2>&1")
+
+
+def _allowed_redirect_end(segment: str, index: int):
+    """Return the index after a non-writing redirect, or None."""
+    for token in _ALLOWED_REDIRECTS:
+        if not segment.startswith(token, index):
+            continue
+        before_ok = index == 0 or segment[index - 1].isspace()
+        after = index + len(token)
+        after_ok = after == len(segment) or segment[after].isspace()
+        if before_ok and after_ok:
+            return after
+    return None
+
+
+def _split_chain(text: str):
+    """Split on ; && || outside quotes. A bare & is still rejected."""
+    parts = []
+    buf = []
+    quote = ""
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                buf.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if text.startswith("&&", i) or text.startswith("||", i):
+            part = "".join(buf).strip()
+            if not part:
+                return None
+            parts.append(part)
+            buf = []
+            i += 2
+            continue
+        if text.startswith("2>&1", i) or text.startswith(">&1", i):
+            token = "2>&1" if text.startswith("2>&1", i) else ">&1"
+            buf.append(token)
+            i += len(token)
+            continue
+        if ch == ";":
+            part = "".join(buf).strip()
+            if not part:
+                return None
+            parts.append(part)
+            buf = []
+            i += 1
+            continue
+        if ch == "&":
+            return None
+        buf.append(ch)
+        i += 1
+    if quote:
+        return None
+    part = "".join(buf).strip()
+    if not part:
+        return None
+    parts.append(part)
+    return parts
+
+
+def _is_workspace_script(path: str) -> bool:
+    """Relative *.py, or a script under /workspace. `..` stays outside."""
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("/workspace/"):
+        rest = normalized[len("/workspace/"):]
+    elif normalized.startswith("/") or (len(normalized) >= 2 and normalized[1] == ":"):
+        return False
+    else:
+        rest = normalized
+    parts = [part for part in rest.split("/") if part and part != "."]
+    if not parts or ".." in parts or not parts[-1].endswith(".py"):
+        return False
+    return True
+
+
+def _python_is_local(argv: list) -> bool:
+    """True for python3 script.py and python3 -c, not for pip or -m pip."""
+    if not argv or argv[0] not in _PYTHON:
+        return False
+    args = list(argv[1:])
+    while args and args[0] in _PYTHON_FLAGS:
+        args = args[1:]
+    if not args:
+        return False
+    if args[0] in ("--version", "-V") and len(args) == 1:
+        return True
+    if args[0] == "-m":
+        return len(args) >= 2 and args[1] == "pytest"
+    if args[0] == "-c":
+        return len(args) >= 2
+    return _is_workspace_script(args[0])
+
+
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=[^\n`$;&|<>]*$")
+_TEST_SUFFIXES = frozenset({".py", ".json", ".txt"})
+
+
+def _drop_env_prefix(argv: list) -> list:
+    rest = list(argv)
+    while rest and _ENV_ASSIGN.match(rest[0]):
+        rest = rest[1:]
+    return rest
+
+
+def _cd_is_safe(argv: list) -> bool:
+    if len(argv) == 1:
+        return True
+    if len(argv) != 2:
+        return False
+    dest = argv[1].replace("\\", "/")
+    if dest in (".", "/workspace"):
+        return True
+    if ".." in [part for part in dest.split("/") if part]:
+        return False
+    if dest.startswith("/workspace/"):
+        return True
+    return not dest.startswith("/") and not (len(dest) >= 2 and dest[1] == ":")
 
 
 def _segment_is_readonly(segment: str) -> bool:
@@ -390,27 +537,51 @@ def _segment_is_readonly(segment: str) -> bool:
         argv = shlex.split(cleaned, posix=True)
     except ValueError:
         return False
+    argv = _drop_env_prefix(argv)
     if not argv or "/" in argv[0] or "\\" in argv[0] or "=" in argv[0]:
         return False
     cmd = argv[0]
+    if cmd == "cd":
+        return _cd_is_safe(argv)
     if cmd in _READONLY_BINARIES:
         if cmd == "find" and any(arg in _FIND_WRITERS for arg in argv[1:]):
             return False
+        return True
+    if cmd in ("pytest",) or (cmd in _PYTHON and _python_is_local(argv)):
         return True
     if cmd in _VERSION_BINARIES:
         return argv[1:] in (["--version"], ["-V"])
     return False
 
 
+def _write_is_auto(path: str) -> bool:
+    """Test artifacts under /workspace do not need an approval dialog."""
+    name = path.replace("\\", "/").split("/")[-1]
+    if "test_" in name:
+        return True
+    return Path(name).suffix.lower() in _TEST_SUFFIXES
+
+
 def _bash_is_readonly(command: str) -> bool:
-    """True when every stage is a read-only probe joined by | or 2>/dev/null."""
+    """True for read-only probes and local python3 test scripts or -c.
+
+    Segments may be joined by |, ;, &&, or ||. stderr redirects 2>&1 and
+    2>/dev/null are ignored. pip install, apt-get, rm, wget, curl, and
+    file redirects (>) still require approval.
+    """
     text = command.strip()
     if not text or "\n" in text or "\r" in text or "\x00" in text:
         return False
-    segments = _split_unquoted(text, "|")
-    if not segments:
+    if _MUTATING.search(text):
         return False
-    return all(_segment_is_readonly(segment) for segment in segments)
+    chains = _split_chain(text)
+    if not chains:
+        return False
+    for chain in chains:
+        segments = _split_unquoted(chain, "|")
+        if not segments or not all(_segment_is_readonly(segment) for segment in segments):
+            return False
+    return True
 
 
 def run_bash(command: str) -> str:
@@ -433,10 +604,11 @@ def run_write(path: str, content: str) -> str:
     denied = _ready_for_tool(path)
     if denied:
         return denied
-    preview = content if len(content) <= 200 else content[:200] + " ... (%d bytes)" % len(content)
-    denied = wait_for_approval("write_file", path + "\n" + preview)
-    if denied:
-        return denied
+    if not _write_is_auto(path):
+        preview = content if len(content) <= 200 else content[:200] + " ... (%d bytes)" % len(content)
+        denied = wait_for_approval("write_file", path + "\n" + preview)
+        if denied:
+            return denied
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
     return run_file_op("write", path, encoded)
 
