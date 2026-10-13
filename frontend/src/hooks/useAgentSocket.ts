@@ -57,6 +57,12 @@ async function readDetail(response: Response): Promise<string> {
   return response.statusText || "请求失败";
 }
 
+function loadParentTaskId(): number | null {
+  const raw = sessionStorage.getItem("safeagent.parent_task_id");
+  const id = raw ? Number(raw) : NaN;
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 function loadSessionId(): string {
   const key = "safeagent.session_id";
   const existing = sessionStorage.getItem(key);
@@ -102,6 +108,7 @@ export function useAgentSocket() {
   const socketRef = useRef<WebSocket | null>(null);
   const taskIdRef = useRef<number | null>(null);
   const sessionRef = useRef<string>(loadSessionId());
+  const parentTaskRef = useRef<number | null>(loadParentTaskId());
   const [sessionId, setSessionId] = useState<string>(sessionRef.current);
   const lineKey = useRef(0);
   const pendingRef = useRef<AgentMessage | null>(null);
@@ -132,6 +139,7 @@ export function useAgentSocket() {
     if (!text || socketRef.current) {
       return;
     }
+    const parentTaskId = parentTaskRef.current;
     const id = Date.now();
     setError("");
     setPending(null);
@@ -211,7 +219,11 @@ export function useAgentSocket() {
       const response = await fetch(`${API_ORIGIN}/api/tasks/${id}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text, session_id: sessionRef.current }),
+        body: JSON.stringify({
+          prompt: text,
+          session_id: sessionRef.current,
+          ...(parentTaskId !== null ? { parent_task_id: parentTaskId } : {}),
+        }),
       });
       if (response.status === 409) {
         setError("任务已在运行");
@@ -230,6 +242,8 @@ export function useAgentSocket() {
         return;
       }
       push({ status: "started", message: `任务 ${id} 已启动` });
+      parentTaskRef.current = id;
+      sessionStorage.setItem("safeagent.parent_task_id", String(id));
       try {
         const started = (await response.json()) as { session_id?: unknown };
         if (typeof started.session_id === "string" && started.session_id) {

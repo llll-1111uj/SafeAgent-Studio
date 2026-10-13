@@ -53,6 +53,7 @@ class ApproveRequest(BaseModel):
 class RunRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     session_id: Optional[str] = None
+    parent_task_id: Optional[int] = None
 
 
 class Pending:
@@ -289,7 +290,13 @@ def _mark_task_failed(task_id: int, error: str) -> None:
     )
 
 
-def _ensure_sandbox(task_id: int) -> bool:
+def _parent_task_id_of(value: Optional[int], task_id: int) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1 or value == task_id:
+        return None
+    return value
+
+
+def _ensure_sandbox(task_id: int, parent_task_id: Optional[int] = None) -> bool:
     """Create and bind a sandbox. Return False when the agent must not start."""
     task = _load_task(task_id) or {}
     bound_name = str(task.get("worktree") or "").strip()
@@ -305,7 +312,11 @@ def _ensure_sandbox(task_id: int) -> bool:
     sandbox_name = _sandbox_name(task_id)
     print("[sandbox] create_sandbox before task_id=%s name=%s" % (task_id, sandbox_name), flush=True)
     try:
-        saved = s02.get_sandbox().create_sandbox(sandbox_name, task_id)
+        saved = s02.get_sandbox().create_sandbox(
+            sandbox_name,
+            task_id,
+            parent_task_id=parent_task_id,
+        )
     except SandboxError as exc:
         print("[sandbox] create_sandbox error task_id=%s: %s" % (task_id, exc), flush=True)
         _mark_task_failed(task_id, str(exc))
@@ -434,14 +445,14 @@ def _summarize_turns(older: list) -> str:
     return text or "此前对话已压缩。"
 
 
-def _agent_thread(task_id: int, prompt: str, session_id: str) -> None:
+def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Optional[int]) -> None:
     # contextvars do not cross into a new thread. Set the id here.
     token = s02.set_task_id(task_id)
     messages = _sessions.messages_for(session_id, prompt, _summarize_turns)
     answer = ""
     try:
         _update_task(task_id, stdout="", error="", session_id=session_id)
-        if not _ensure_sandbox(task_id):
+        if not _ensure_sandbox(task_id, parent_task_id):
             answer = "上一轮没有完成：沙箱未能创建。"
             return
         s02.agent_loop(messages)
@@ -612,10 +623,11 @@ def run_task(task_id: int, body: RunRequest) -> dict:
             raise HTTPException(status_code=409, detail="task agent is already running")
         _running.add(task_id)
     session_id = _session_id_of(body.session_id)
+    parent_task_id = _parent_task_id_of(body.parent_task_id, task_id)
     try:
         threading.Thread(
             target=_agent_thread,
-            args=(task_id, body.prompt, session_id),
+            args=(task_id, body.prompt, session_id, parent_task_id),
             name="agent-%s" % task_id,
             daemon=True,
         ).start()

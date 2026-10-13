@@ -129,12 +129,20 @@ class SandboxManager:
         self._lock_path = self.repo_root / ".worktrees" / "index.lock"
         self.startup_reconciliation()
 
-    def create_sandbox(self, name: str, task_id: int, base_ref: str = "HEAD") -> dict:
+    def create_sandbox(
+        self,
+        name: str,
+        task_id: int,
+        base_ref: str = "HEAD",
+        parent_task_id: Optional[int] = None,
+    ) -> dict:
         """Create volumes, seed the workspace, start the container, and record it.
 
         Returns the index entry. status is active and container_id is set.
         On any failure after resources exist, the container and both volumes
         are removed and the index entry is marked failed. The task is not bound.
+        After git archive seeds /workspace and the container is running,
+        files from .worktrees/artifacts/{parent_task_id}/ are copied in.
         """
         self._validate_name(name)
         self._validate_task_id(task_id)
@@ -193,6 +201,13 @@ class SandboxManager:
             container_id = started.stdout.strip()
             if not container_id:
                 raise SandboxError("docker run returned an empty container id")
+            self._restore_artifacts(
+                container_name,
+                parent_task_id,
+                workspace_volume,
+                output_volume,
+                helper_image,
+            )
             entry["container_id"] = container_id
             entry["status"] = "active"
             entry["error"] = ""
@@ -206,6 +221,40 @@ class SandboxManager:
         except Exception as exc:
             self._fail_create(container_name, containers, volumes, exc)
             raise
+
+    def _restore_artifacts(
+        self,
+        container_name: str,
+        parent_task_id: Optional[int],
+        workspace_volume: str,
+        output_volume: str,
+        helper_image: str,
+    ) -> None:
+        """Copy the previous task's exported /workspace into this container.
+
+        git archive has already filled the volume. docker cp then overlays
+        .worktrees/artifacts/{parent_task_id}/ onto /workspace. A missing
+        directory means the previous turn saved nothing, so creation continues.
+        """
+        if isinstance(parent_task_id, bool) or not isinstance(parent_task_id, int) or parent_task_id < 1:
+            return
+        source = self.repo_root / ".worktrees" / "artifacts" / str(parent_task_id)
+        if not source.is_dir():
+            print("[sandbox] no artifacts to restore parent_task_id=%s" % parent_task_id, flush=True)
+            return
+        spec = source.as_posix().rstrip("/") + "/."
+        self._run(["docker", "cp", spec, "%s:/workspace" % container_name], timeout=180)
+        self._chown_volumes(
+            workspace_volume,
+            output_volume,
+            container_name + "-restore-chown",
+            helper_image,
+        )
+        print(
+            "[sandbox] restored artifacts parent_task_id=%s container=%s"
+            % (parent_task_id, container_name),
+            flush=True,
+        )
 
     def execute(self, sandbox_id: str, command: str) -> ExecResult:
         """Run command in /workspace as uid 1000.
