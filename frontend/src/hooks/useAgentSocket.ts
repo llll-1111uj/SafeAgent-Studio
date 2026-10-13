@@ -86,6 +86,8 @@ export function useAgentSocket() {
   const socketRef = useRef<WebSocket | null>(null);
   const taskIdRef = useRef<number | null>(null);
   const lineKey = useRef(0);
+  const pendingRef = useRef<AgentMessage | null>(null);
+  const autoActionsRef = useRef<Set<string>>(new Set());
 
   const push = useCallback((payload: AgentMessage) => {
     const key = lineKey.current + 1;
@@ -119,6 +121,7 @@ export function useAgentSocket() {
     lineKey.current = 0;
     setTaskId(id);
     taskIdRef.current = id;
+    autoActionsRef.current = new Set();
     setRunning(true);
 
     let socket: WebSocket;
@@ -140,6 +143,12 @@ export function useAgentSocket() {
       }
       push(payload);
       if (payload.status === "pending_approval") {
+        const action = payload.action || "";
+        if (action && autoActionsRef.current.has(action)) {
+          void approveCurrent(true, false, payload);
+          return;
+        }
+        pendingRef.current = payload;
         setPending(payload);
         return;
       }
@@ -181,11 +190,17 @@ export function useAgentSocket() {
     }
   }, [push]);
 
-  const decide = useCallback(async (approved: boolean) => {
+  const approveCurrent = useCallback(async (
+    approved: boolean,
+    rememberSimilar: boolean,
+    source: AgentMessage | null,
+  ) => {
     const id = taskIdRef.current;
-    if (id === null) {
+    const current = source || pendingRef.current;
+    if (id === null || current === null) {
       return;
     }
+    const action = current.action || "";
     setDeciding(true);
     setError("");
     try {
@@ -196,19 +211,43 @@ export function useAgentSocket() {
       });
       if (response.status === 409 || response.status === 404) {
         setError("当前没有等待中的审批");
+        pendingRef.current = current;
+        setPending(current);
         return;
       }
       if (!response.ok) {
         setError(await readDetail(response));
+        pendingRef.current = current;
+        setPending(current);
         return;
       }
-      setPending(null);
+      if (approved && rememberSimilar && action) {
+        autoActionsRef.current.add(action);
+      }
+      if (source && action && autoActionsRef.current.has(action)) {
+        const headline = (current.args || "").split("\n")[0].trim();
+        push({
+          status: "approved",
+          action,
+          message: `已自动批准同类操作 ${action}${headline ? "：" + headline : ""}`,
+        });
+      }
+      if (pendingRef.current === current) {
+        pendingRef.current = null;
+        setPending(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "审批请求失败");
+      pendingRef.current = current;
+      setPending(current);
     } finally {
       setDeciding(false);
     }
-  }, []);
+  }, [push]);
+
+  const decide = useCallback((approved: boolean, rememberSimilar = false) => {
+    return approveCurrent(approved, rememberSimilar, null);
+  }, [approveCurrent]);
 
   return { taskId, running, deciding, lines, pending, error, start, decide };
 }

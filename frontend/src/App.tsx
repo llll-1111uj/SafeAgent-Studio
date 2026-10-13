@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Input, Modal, Typography } from "antd";
+import { Alert, Button, Input, Typography } from "antd";
+import ApprovalModal from "./ApprovalModal";
 import { useAgentSocket } from "./hooks/useAgentSocket";
 
 const TONE: Record<string, string> = {
@@ -23,8 +24,6 @@ export default function App() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [lines]);
-
-  const headline = (pending?.args || "").split("\n")[0].trim();
 
   return (
     <main className="mx-auto flex h-svh max-w-5xl flex-col gap-4 overflow-hidden px-4 py-6">
@@ -82,32 +81,7 @@ export default function App() {
         <div ref={bottomRef} />
       </section>
 
-      <Modal
-        title="需要您授权"
-        open={pending !== null}
-        closable={false}
-        maskClosable={false}
-        keyboard={false}
-        footer={[
-          <Button key="reject" danger loading={deciding} onClick={() => void decide(false)}>
-            拒绝
-          </Button>,
-          <Button key="approve" type="primary" loading={deciding} onClick={() => void decide(true)}>
-            同意
-          </Button>,
-        ]}
-      >
-        <p className="mb-2">
-          需要您授权执行 {pending?.action || "命令"}
-          {headline ? `：${headline}` : ""}
-        </p>
-        {pending?.args ? (
-          <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded bg-slate-100 p-3 text-sm">
-            {pending.args}
-          </pre>
-        ) : null}
-        <p className="mb-0 mt-3 text-slate-500">后端已阻塞，必须调用 /api/approve 才能继续。</p>
-      </Modal>
+      <ApprovalModal pending={pending} deciding={deciding} onDecide={(approved, rememberSimilar) => void decide(approved, rememberSimilar)} />
     </main>
   );
 }

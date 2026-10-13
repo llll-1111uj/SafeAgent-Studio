@@ -1286,6 +1286,63 @@
         "pids": 128
       },
       "error": ""
+    },
+    {
+      "name": "agent-1791883189654",
+      "task_id": 1791883189654,
+      "status": "active",
+      "container_name": "sa-1791883189654-agent-1791883189654",
+      "container_id": "66f9cd9c13dea328720e6a52df93dd54bdb67ff94417cdab9af0695cd79c7636",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1791883189654",
+      "output_volume": "sa-out-1791883189654",
+      "base_commit": "6547452072b50d3540168aa275b3f3b84a3507cf",
+      "created_at": 1791883189.8118324,
+      "deadline_ts": 1791884989.8118324,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": ""
+    },
+    {
+      "name": "agent-1791883389802",
+      "task_id": 1791883389802,
+      "status": "active",
+      "container_name": "sa-1791883389802-agent-1791883389802",
+      "container_id": "feaaab46c138cbc4a41bbca68408a39574928719cc275e69b0209450a4deca46",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1791883389802",
+      "output_volume": "sa-out-1791883389802",
+      "base_commit": "6547452072b50d3540168aa275b3f3b84a3507cf",
+      "created_at": 1791883389.8538427,
+      "deadline_ts": 1791885189.8538427,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": ""
+    },
+    {
+      "name": "agent-1791883982999",
+      "task_id": 1791883982999,
+      "status": "active",
+      "container_name": "sa-1791883982999-agent-1791883982999",
+      "container_id": "589a7c2ccc6000b08a2d85764087c27df48b25fb600db0d0bcbcbba30bcff02c",
+      "image": "safeagent-sandbox:py310",
+      "workspace_volume": "sa-ws-1791883982999",
+      "output_volume": "sa-out-1791883982999",
+      "base_commit": "6547452072b50d3540168aa275b3f3b84a3507cf",
+      "created_at": 1791883983.1780508,
+      "deadline_ts": 1791885783.1780508,
+      "limits": {
+        "cpus": 1.0,
+        "memory": "512m",
+        "pids": 128
+      },
+      "error": ""
     }
   ]
 }
