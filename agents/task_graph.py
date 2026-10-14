@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s07_task_system.py - Tasks
+task_graph.py - Tasks
 
 Tasks persist as JSON files in .tasks/ so they survive context compression.
 Each task has a dependency graph (blockedBy/blocks).
@@ -20,6 +20,14 @@ Each task has a dependency graph (blockedBy/blocks).
 
 Key insight: "State that survives compression -- because it's outside the conversation."
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('task_graph')
 
 import json
 import os
@@ -223,7 +231,7 @@ def agent_loop(messages: list):
                     output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
                 except Exception as e:
                     output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
+                log.info(f"> {block.name}: {str(output)[:200]}")
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
         messages.append({"role": "user", "content": results})
 
@@ -243,5 +251,5 @@ if __name__ == "__main__":
         if isinstance(response_content, list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block.text)
-        print()
+                    log.info(block.text)
+        log.info("")

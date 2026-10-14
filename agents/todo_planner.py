@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s03_todo_write.py - TodoWrite
+todo_planner.py - TodoWrite
 
 The model tracks its own progress via a TodoManager. A nag reminder
 forces it to keep updating when it forgets.
@@ -25,6 +25,14 @@ forces it to keep updating when it forgets.
 
 Key insight: "The agent can track its own progress -- and I can see it."
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('todo_planner')
 
 import os
 import subprocess
@@ -180,7 +188,7 @@ def agent_loop(messages: list):
                     output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
                 except Exception as e:
                     output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
+                log.info(f"> {block.name}: {str(output)[:200]}")
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
                 if block.name == "todo":
                     used_todo = True
@@ -205,5 +213,5 @@ if __name__ == "__main__":
         if isinstance(response_content, list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block.text)
-        print()
+                    log.info(block.text)
+        log.info("")

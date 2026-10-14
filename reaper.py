@@ -19,6 +19,9 @@ if str(AGENTS) not in sys.path:
     sys.path.insert(0, str(AGENTS))
 
 from sandbox_manager import SandboxError, SandboxManager
+from utils.logger import get_logger
+
+log = get_logger("reaper")
 
 
 class SandboxReaper:
@@ -56,11 +59,11 @@ class SandboxReaper:
             try:
                 saved = self.manager.timeout_sandbox(name)
             except SandboxError as exc:
-                print(f"[sandbox] timeout {name} failed: {exc}", file=sys.stderr)
+                log.error(f"[sandbox] timeout {name} failed: {exc}")
                 continue
             if saved.get("status") == "timed_out":
                 destroyed.append(name)
-                print(f"[sandbox] timeout {name} task={saved.get('task_id')}")
+                log.info(f"[sandbox] timeout {name} task={saved.get('task_id')}")
         return destroyed
 
     def start(self) -> None:
@@ -86,9 +89,9 @@ class SandboxReaper:
             try:
                 self.scan_once()
             except SandboxError as exc:
-                print(f"[sandbox] reaper scan failed: {exc}", file=sys.stderr)
+                log.error(f"[sandbox] reaper scan failed: {exc}")
             except Exception as exc:
-                print(f"[sandbox] reaper scan failed: {exc}", file=sys.stderr)
+                log.error(f"[sandbox] reaper scan failed: {exc}")
             if self._stop.wait(self.interval):
                 return
 
@@ -108,16 +111,16 @@ def main() -> None:
         reaper = SandboxReaper(repo_root=ROOT)
         report = reaper.startup_reconciliation()
     except SandboxError as exc:
-        print(f"[sandbox] reaper not started: {exc}", file=sys.stderr, flush=True)
+        log.error(f"[sandbox] reaper not started: {exc}")
         raise SystemExit(1)
-    print("[sandbox] reconciliation", report, flush=True)
+    log.info("[sandbox] reconciliation %s", report)
     reaper.start()
-    print("[sandbox] reaper running, interval=5s, source=index deadline_ts. Ctrl+C to stop.", flush=True)
+    log.info("[sandbox] reaper running, interval=5s, source=index deadline_ts. Ctrl+C to stop.")
     try:
         while True:
             time.sleep(0.5)
     except KeyboardInterrupt:
-        print("\n[sandbox] stopping reaper")
+        log.info("\n[sandbox] stopping reaper")
     finally:
         reaper.stop()
 

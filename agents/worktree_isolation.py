@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s12_worktree_task_isolation.py - Worktree + Task Isolation
+worktree_isolation.py - Worktree + Task Isolation
 
 Directory-level isolation for parallel task execution.
 Tasks are the control plane and worktrees are the execution plane.
@@ -28,6 +28,14 @@ Tasks are the control plane and worktrees are the execution plane.
 
 Key insight: "Isolate by directory, coordinate by task ID."
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('worktree_isolation')
 
 import json
 import os
@@ -747,7 +755,7 @@ def agent_loop(messages: list):
                     output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
                 except Exception as e:
                     output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
+                log.info(f"> {block.name}: {str(output)[:200]}")
                 results.append(
                     {
                         "type": "tool_result",
@@ -759,9 +767,9 @@ def agent_loop(messages: list):
 
 
 if __name__ == "__main__":
-    print(f"Repo root for s12: {REPO_ROOT}")
+    log.info(f"Repo root for s12: {REPO_ROOT}")
     if not WORKTREES.git_available:
-        print("Note: Not in a git repo. worktree_* tools will return errors.")
+        log.info("Note: Not in a git repo. worktree_* tools will return errors.")
 
     history = []
     while True:
@@ -777,5 +785,5 @@ if __name__ == "__main__":
         if isinstance(response_content, list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block.text)
-        print()
+                    log.info(block.text)
+        log.info("")

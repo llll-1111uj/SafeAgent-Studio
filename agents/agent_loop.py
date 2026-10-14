@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s01_agent_loop.py - The Agent Loop
+agent_loop.py - The Agent Loop
 
 The entire secret of an AI coding agent in one pattern:
 
@@ -22,6 +22,14 @@ This is the core loop: feed tool results back to the model
 until the model decides to stop. Production agents layer
 policy, hooks, and lifecycle controls on top.
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('agent_loop')
 
 import os
 import subprocess
@@ -79,9 +87,9 @@ def agent_loop(messages: list):
         results = []
         for block in response.content:
             if block.type == "tool_use":
-                print(f"\033[33m$ {block.input['command']}\033[0m")
+                log.info(f"\033[33m$ {block.input['command']}\033[0m")
                 output = run_bash(block.input["command"])
-                print(output[:200])
+                log.info(output[:200])
                 results.append({"type": "tool_result", "tool_use_id": block.id,
                                 "content": output})
         messages.append({"role": "user", "content": results})
@@ -102,5 +110,5 @@ if __name__ == "__main__":
         if isinstance(response_content, list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block.text)
-        print()
+                    log.info(block.text)
+        log.info("")

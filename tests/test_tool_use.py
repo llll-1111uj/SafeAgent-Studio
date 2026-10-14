@@ -1,6 +1,6 @@
-"""隔离验证 s02 的 bash / read_file / write_file。
+"""隔离验证 core_agent 的 bash / read_file / write_file。
 
-s02 不接收沙箱参数。它只认唯一一个 status=in_progress 且 worktree 非空的任务，
+core_agent 不接收沙箱参数。它只认唯一一个 status=in_progress 且 worktree 非空的任务，
 再按 task_id + worktree 到 .worktrees/index.json 里找 status=active 的容器名。
 因此创建沙箱之后必须把 task_888.json 写成 in_progress / worktree=tool-test，
 结束时再改回 pending / worktree=""。
@@ -13,12 +13,13 @@ import time
 import traceback
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "agents"))
 
 from sandbox_manager import SandboxError, SandboxManager
-from s02_tool_use import run_bash, run_read, run_write
+from core_agent import run_bash, run_read, run_write
 
 TASK_ID = 888
 SANDBOX_NAME = "tool-test"

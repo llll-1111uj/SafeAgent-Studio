@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s11_autonomous_agents.py - Autonomous Agents
+autonomous_agents.py - Autonomous Agents
 
 Idle cycle with task board polling, auto-claiming unclaimed tasks, and
 identity re-injection after context compression. Builds on s10's protocols.
@@ -33,6 +33,14 @@ identity re-injection after context compression. Builds on s10's protocols.
 
 Key insight: "The agent finds work itself."
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('autonomous_agents')
 
 import json
 import os
@@ -245,7 +253,7 @@ class TeammateManager:
                             output = "Entering idle phase. Will poll for new tasks."
                         else:
                             output = self._exec(name, block.name, block.input)
-                        print(f"  [{name}] {block.name}: {str(output)[:120]}")
+                        log.info(f"  [{name}] {block.name}: {str(output)[:120]}")
                         results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
@@ -536,7 +544,7 @@ def agent_loop(messages: list):
                     output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
                 except Exception as e:
                     output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
+                log.info(f"> {block.name}: {str(output)[:200]}")
                 results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -555,10 +563,10 @@ if __name__ == "__main__":
         if query.strip().lower() in ("q", "exit", ""):
             break
         if query.strip() == "/team":
-            print(TEAM.list_all())
+            log.info(TEAM.list_all())
             continue
         if query.strip() == "/inbox":
-            print(json.dumps(BUS.read_inbox("lead"), indent=2))
+            log.info(json.dumps(BUS.read_inbox("lead"), indent=2))
             continue
         if query.strip() == "/tasks":
             TASKS_DIR.mkdir(exist_ok=True)
@@ -566,7 +574,7 @@ if __name__ == "__main__":
                 t = json.loads(f.read_text())
                 marker = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}.get(t["status"], "[?]")
                 owner = f" @{t['owner']}" if t.get("owner") else ""
-                print(f"  {marker} #{t['id']}: {t['subject']}{owner}")
+                log.info(f"  {marker} #{t['id']}: {t['subject']}{owner}")
             continue
         history.append({"role": "user", "content": query})
         agent_loop(history)
@@ -574,5 +582,5 @@ if __name__ == "__main__":
         if isinstance(response_content, list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block.text)
-        print()
+                    log.info(block.text)
+        log.info("")

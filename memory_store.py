@@ -17,6 +17,10 @@ from typing import Optional
 
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
+from utils.logger import get_logger
+
+log = get_logger("memory")
+
 import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from chromadb.config import Settings
@@ -101,10 +105,10 @@ def new_artifact_names(repo_root: Path, task_id: int) -> list[str]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        print("[memory] git ls-files failed: %s" % exc, flush=True)
+        log.error("[memory] git ls-files failed: %s" % exc)
         return []
     if completed.returncode != 0:
-        print("[memory] git ls-files failed: %s" % completed.stderr.strip(), flush=True)
+        log.error("[memory] git ls-files failed: %s" % completed.stderr.strip())
         return []
     tracked = {
         line.strip().replace("\\", "/")
@@ -175,10 +179,7 @@ class LongMemory:
                     }
                 ],
             )
-        print(
-            "[memory] stored task_id=%s files=%s" % (task_id, len(shown)),
-            flush=True,
-        )
+        log.info("[memory] stored task_id=%s files=%s" % (task_id, len(shown)))
 
     def recall(self, prompt: str) -> str:
         """System-prompt block of the three nearest past tasks. Empty if none."""
@@ -206,10 +207,7 @@ class LongMemory:
             task_id = meta.get("task_id", "")
             distance = distances[index] if index < len(distances) else None
             if isinstance(distance, float):
-                print(
-                    "[memory] hit task_id=%s distance=%.3f" % (task_id, distance),
-                    flush=True,
-                )
+                log.info("[memory] hit task_id=%s distance=%.3f" % (task_id, distance))
             blocks.append("[%s] 任务 %s\n%s" % (len(blocks) + 1, task_id, _clip(str(document), _INJECT_LIMIT)))
         if not blocks:
             return ""

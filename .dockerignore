@@ -1,0 +1,12 @@
+# Bytecode, local environments, and runtime state stay out of the image.
+# docker-compose bind-mounts the repo at runtime, including .git.
+frontend/node_modules
+**/__pycache__
+**/*.pyc
+.venv
+venv
+.worktrees
+.tasks
+logs
+.env
+.git

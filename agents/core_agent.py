@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s02_tool_use.py - Tools
+core_agent.py - Tools
 
 The agent loop from s01 didn't change. We just added tools to the array
 and a dispatch map to route calls.
@@ -17,6 +17,14 @@ and a dispatch map to route calls.
 
 Key insight: "The loop didn't change at all. I just added tools."
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('core_agent')
 
 import base64
 import contextvars
@@ -875,7 +883,7 @@ def agent_loop(messages: list, system_extra=""):
                         publish_status("tool_result", preview, action=block.name)
                     else:
                         publish_status("tool_result", block.name, action=block.name)
-                    print("> %s: %s" % (block.name, output[:200]))
+                    log.info("> %s: %s" % (block.name, output[:200]))
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
             messages.append({"role": "user", "content": results})
     except Exception as exc:
@@ -887,7 +895,7 @@ if __name__ == "__main__":
     history = []
     while True:
         try:
-            query = input("\033[36ms02 >> \033[0m")
+            query = input("\033[36mcore >> \033[0m")
         except (EOFError, KeyboardInterrupt):
             break
         if query.strip().lower() in ("q", "exit", ""):
@@ -898,5 +906,5 @@ if __name__ == "__main__":
         if isinstance(response_content, list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block.text)
-        print()
+                    log.info(block.text)
+        log.info("")

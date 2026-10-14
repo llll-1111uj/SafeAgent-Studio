@@ -9,6 +9,9 @@ venv/
 # 环境变量
 .env
 
+# 应用日志
+logs/
+
 # 运行时生成的任务和状态文件
 .tasks/
 .worktrees/index.json

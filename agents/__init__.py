@@ -1,2 +1,3 @@
-# agents/ - Python teaching agents (s01-s12) + reference agent (s_full)
-# Each file is self-contained and runnable: python agents/s01_agent_loop.py
+# SafeAgent Studio agent modules.
+# Live tool loop: python agents/core_agent.py
+# Capstone reference: python agents/full_agent.py

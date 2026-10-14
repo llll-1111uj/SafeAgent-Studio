@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s04_subagent.py - Subagents
+subagent.py - Subagents
 
 Spawn a child agent with fresh messages=[]. The child works in its own
 context, sharing the filesystem, then returns only a summary to the parent.
@@ -21,6 +21,14 @@ context, sharing the filesystem, then returns only a summary to the parent.
 
 Key insight: "Process isolation gives context isolation for free."
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('subagent')
 
 import os
 import subprocess
@@ -154,12 +162,12 @@ def agent_loop(messages: list):
             if block.type == "tool_use":
                 if block.name == "task":
                     desc = block.input.get("description", "subtask")
-                    print(f"> task ({desc}): {block.input['prompt'][:80]}")
+                    log.info(f"> task ({desc}): {block.input['prompt'][:80]}")
                     output = run_subagent(block.input["prompt"])
                 else:
                     handler = TOOL_HANDLERS.get(block.name)
                     output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
-                print(f"  {str(output)[:200]}")
+                log.info(f"  {str(output)[:200]}")
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
         messages.append({"role": "user", "content": results})
 
@@ -179,5 +187,5 @@ if __name__ == "__main__":
         if isinstance(response_content, list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block.text)
-        print()
+                    log.info(block.text)
+        log.info("")

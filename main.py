@@ -27,7 +27,12 @@ if str(ROOT) not in sys.path:
 if str(AGENTS_DIR) not in sys.path:
     sys.path.insert(0, str(AGENTS_DIR))
 
-import s02_tool_use as s02
+from utils.logger import configure_logging, get_logger
+
+configure_logging(ROOT)
+log = get_logger("api")
+
+import core_agent as agent
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -95,7 +100,7 @@ class ConnectionHub:
         try:
             future.result(timeout=5)
         except Exception as exc:
-            print("[ws] publish failed task_id=%s: %s" % (task_id, exc), flush=True)
+            log.info("[ws] publish failed task_id=%s: %s" % (task_id, exc))
 
     async def _fanout(self, task_id: int, payload: dict) -> None:
         with self._lock:
@@ -127,11 +132,8 @@ class ApprovalBroker:
             self._pending[task_id] = pending
         shown = args_preview if len(args_preview) <= 500 else args_preview[:500] + "..."
         headline = shown.strip().splitlines()[0].strip() if shown.strip() else action
-        print(
-            "[hitl] waiting for approval task_id=%s action=%s timeout=%.0fs"
-            % (task_id, action, self._timeout),
-            flush=True,
-        )
+        log.info("[hitl] waiting for approval task_id=%s action=%s timeout=%.0fs"
+            % (task_id, action, self._timeout))
         self._hub.publish(task_id, {
             "status": "pending_approval",
             "task_id": task_id,
@@ -147,7 +149,7 @@ class ApprovalBroker:
                 if self._pending.get(task_id) is pending:
                     self._pending.pop(task_id, None)
         if not signaled:
-            print("[hitl] approval timed out task_id=%s action=%s" % (task_id, action), flush=True)
+            log.info("[hitl] approval timed out task_id=%s action=%s" % (task_id, action))
             self._hub.publish(task_id, {
                 "status": "timeout",
                 "task_id": task_id,
@@ -211,7 +213,7 @@ def _ensure_task_file(task_id: int) -> dict:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(task, indent=2, ensure_ascii=False), encoding="utf-8")
-    print("[api] created task file %s" % path, flush=True)
+    log.info("[api] created task file %s" % path)
     return task
 
 
@@ -239,7 +241,7 @@ def _active_sandbox(task_id: int, name: str) -> Optional[dict]:
     try:
         data = json.loads(index_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        print("[sandbox] index read failed task_id=%s: %s" % (task_id, exc), flush=True)
+        log.info("[sandbox] index read failed task_id=%s: %s" % (task_id, exc))
         return None
     found = None
     for item in data.get("sandboxes", []):
@@ -263,11 +265,8 @@ def _bind_sandbox(task_id: int, saved: dict) -> dict:
         },
         error="",
     )
-    print(
-        "[sandbox] task bound task_id=%s status=%s worktree=%r container_name=%s"
-        % (task_id, bound.get("status"), bound.get("worktree"), saved.get("container_name")),
-        flush=True,
-    )
+    log.info("[sandbox] task bound task_id=%s status=%s worktree=%r container_name=%s"
+        % (task_id, bound.get("status"), bound.get("worktree"), saved.get("container_name")))
     return bound
 
 
@@ -276,20 +275,17 @@ def _mark_approval_timeout(task_id: int) -> None:
     try:
         _update_task(task_id, status="timeout", error=APPROVAL_DENIED)
     except (OSError, json.JSONDecodeError, SandboxError) as exc:
-        print("[hitl] failed to mark task %s timeout: %s" % (task_id, exc), flush=True)
+        log.info("[hitl] failed to mark task %s timeout: %s" % (task_id, exc))
 
 
 def _mark_task_failed(task_id: int, error: str) -> None:
     try:
         task = _update_task(task_id, status="failed", worktree="", error=error)
     except (OSError, json.JSONDecodeError, SandboxError) as exc:
-        print("[sandbox] failed to mark task %s failed: %s" % (task_id, exc), flush=True)
+        log.info("[sandbox] failed to mark task %s failed: %s" % (task_id, exc))
         return
-    print(
-        "[sandbox] task marked failed task_id=%s status=%s worktree=%r"
-        % (task_id, task.get("status"), task.get("worktree")),
-        flush=True,
-    )
+    log.info("[sandbox] task marked failed task_id=%s status=%s worktree=%r"
+        % (task_id, task.get("status"), task.get("worktree")))
 
 
 def _parent_task_id_of(value: Optional[int], task_id: int) -> Optional[int]:
@@ -305,36 +301,30 @@ def _ensure_sandbox(task_id: int, parent_task_id: Optional[int] = None) -> bool:
     if task.get("status") == "in_progress" and bound_name:
         existing = _active_sandbox(task_id, bound_name)
         if existing:
-            print(
-                "[sandbox] reuse active sandbox task_id=%s name=%s container_name=%s"
-                % (task_id, bound_name, existing.get("container_name")),
-                flush=True,
-            )
+            log.info("[sandbox] reuse active sandbox task_id=%s name=%s container_name=%s"
+                % (task_id, bound_name, existing.get("container_name")))
             return True
     sandbox_name = _sandbox_name(task_id)
-    print("[sandbox] create_sandbox before task_id=%s name=%s" % (task_id, sandbox_name), flush=True)
+    log.info("[sandbox] create_sandbox before task_id=%s name=%s" % (task_id, sandbox_name))
     try:
-        saved = s02.get_sandbox().create_sandbox(
+        saved = agent.get_sandbox().create_sandbox(
             sandbox_name,
             task_id,
             parent_task_id=parent_task_id,
         )
     except SandboxError as exc:
-        print("[sandbox] create_sandbox error task_id=%s: %s" % (task_id, exc), flush=True)
+        log.info("[sandbox] create_sandbox error task_id=%s: %s" % (task_id, exc))
         _mark_task_failed(task_id, str(exc))
-        s02.publish_status("error", s02.tool_error(exc))
+        agent.publish_status("error", agent.tool_error(exc))
         return False
-    print(
-        "[sandbox] create_sandbox after task_id=%s return=%s"
-        % (task_id, json.dumps(saved, ensure_ascii=False)),
-        flush=True,
-    )
+    log.info("[sandbox] create_sandbox after task_id=%s return=%s"
+        % (task_id, json.dumps(saved, ensure_ascii=False)))
     try:
         _bind_sandbox(task_id, saved)
     except (OSError, json.JSONDecodeError, SandboxError) as exc:
-        print("[sandbox] bind error task_id=%s: %s" % (task_id, exc), flush=True)
+        log.info("[sandbox] bind error task_id=%s: %s" % (task_id, exc))
         _mark_task_failed(task_id, str(exc))
-        s02.publish_status("error", s02.tool_error(exc))
+        agent.publish_status("error", agent.tool_error(exc))
         return False
     return True
 
@@ -401,19 +391,16 @@ def _release_sandbox(task_id: int) -> None:
     try:
         if not container:
             return
-        manager = s02.get_sandbox()
+        manager = agent.get_sandbox()
         if _should_keep_sandbox(task_id):
             saved = manager.keep_sandbox(container)
-            print(
-                "[sandbox] kept task_id=%s container=%s until=%s"
-                % (task_id, container, saved.get("volume_retain_until")),
-                flush=True,
-            )
+            log.info("[sandbox] kept task_id=%s container=%s until=%s"
+                % (task_id, container, saved.get("volume_retain_until")))
             return
         manager.remove_sandbox(container, complete_task=False)
-        print("[sandbox] removed task_id=%s container=%s" % (task_id, container), flush=True)
+        log.info("[sandbox] removed task_id=%s container=%s" % (task_id, container))
     except SandboxError as exc:
-        print("[sandbox] release failed task_id=%s container=%s: %s" % (task_id, container, exc), flush=True)
+        log.info("[sandbox] release failed task_id=%s container=%s: %s" % (task_id, container, exc))
     finally:
         _keep_tasks.discard(task_id)
 
@@ -438,18 +425,18 @@ def _summarize_turns(older: list) -> str:
         "请把下面的对话压缩成一段中文摘要，保留用户目标、关键结论、文件名和未完成事项。不要寒暄。\n\n"
         + "\n".join(lines)
     )
-    response = s02.client.messages.create(
-        model=s02.MODEL,
+    response = agent.client.messages.create(
+        model=agent.MODEL,
         max_tokens=800,
         messages=[{"role": "user", "content": prompt}],
     )
-    text = s02._final_text(response.content).strip()
+    text = agent._final_text(response.content).strip()
     return text or "此前对话已压缩。"
 
 
 def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Optional[int]) -> None:
     # contextvars do not cross into a new thread. Set the id here.
-    token = s02.set_task_id(task_id)
+    token = agent.set_task_id(task_id)
     messages = _sessions.messages_for(session_id, prompt, _summarize_turns)
     answer = ""
     completed = False
@@ -462,29 +449,26 @@ def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Op
         try:
             system_extra = _memory.recall(prompt)
         except Exception as exc:
-            print("[memory] recall failed task_id=%s: %s" % (task_id, exc), flush=True)
-        s02.agent_loop(messages, system_extra)
+            log.info("[memory] recall failed task_id=%s: %s" % (task_id, exc))
+        agent.agent_loop(messages, system_extra)
         answer = _assistant_stdout(messages)
         _update_task(task_id, status="completed", stdout=answer, error="")
         completed = True
     except Exception as exc:
-        message = s02.tool_error(exc)
+        message = agent.tool_error(exc)
         answer = "上一轮没有完成：" + message
-        print("[agent] task %s failed: %s" % (task_id, message), file=sys.stderr, flush=True)
+        log.error("[agent] task %s failed: %s" % (task_id, message))
         try:
             _update_task(task_id, status="failed", error=message)
         except (OSError, json.JSONDecodeError, SandboxError) as write_exc:
-            print("[agent] failed to record task %s error: %s" % (task_id, write_exc), flush=True)
+            log.info("[agent] failed to record task %s error: %s" % (task_id, write_exc))
     finally:
         try:
             stored = _sessions.commit(session_id, prompt, answer, _summarize_turns)
-            print(
-                "[session] remember session_id=%s turns=%s tokens~%s"
-                % (session_id, len(stored), estimate_tokens(stored)),
-                flush=True,
-            )
+            log.info("[session] remember session_id=%s turns=%s tokens~%s"
+                % (session_id, len(stored), estimate_tokens(stored)))
         except Exception as exc:
-            print("[session] remember failed session_id=%s: %s" % (session_id, exc), flush=True)
+            log.info("[session] remember failed session_id=%s: %s" % (session_id, exc))
         _release_sandbox(task_id)
         if completed:
             try:
@@ -496,8 +480,8 @@ def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Op
                     new_artifact_names(ROOT, task_id),
                 )
             except Exception as exc:
-                print("[memory] remember failed task_id=%s: %s" % (task_id, exc), flush=True)
-        s02.reset_task_id(token)
+                log.info("[memory] remember failed task_id=%s: %s" % (task_id, exc))
+        agent.reset_task_id(token)
         with _runs_lock:
             _running.discard(task_id)
 
@@ -506,15 +490,15 @@ def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Op
 async def lifespan(app: FastAPI):
     global _reaper
     hub.bind_loop(asyncio.get_running_loop())
-    s02.set_approval_waiter(broker.wait)
-    s02.set_status_publisher(_publish_status)
+    agent.set_approval_waiter(broker.wait)
+    agent.set_status_publisher(_publish_status)
     _log_routes()
     try:
         _reaper = SandboxReaper(repo_root=ROOT)
-        print("[sandbox] reconciliation", _reaper.startup_reconciliation(), flush=True)
+        log.info("[sandbox] reconciliation %s", _reaper.startup_reconciliation())
         _reaper.start()
     except SandboxError as exc:
-        print("[sandbox] reaper not started: %s" % exc, file=sys.stderr, flush=True)
+        log.error("[sandbox] reaper not started: %s" % exc)
         _reaper = None
     try:
         yield
@@ -543,12 +527,12 @@ app.add_middleware(
 
 
 def _log_routes() -> None:
-    print("[route] registered paths:", flush=True)
+    log.info("[route] registered paths:")
     for route in app.routes:
         methods = getattr(route, "methods", None) or set()
         path = getattr(route, "path", "")
         label = ",".join(sorted(methods)) if methods else "WEBSOCKET"
-        print("[route] %s %s" % (label, path), flush=True)
+        log.info("[route] %s %s" % (label, path))
 
 
 @app.get("/health")
@@ -579,12 +563,9 @@ def approve(body: ApproveRequest) -> dict:
         try:
             _update_task(body.task_id, keep=True)
         except (OSError, json.JSONDecodeError, SandboxError) as exc:
-            print("[hitl] failed to mark task %s keep: %s" % (body.task_id, exc), flush=True)
+            log.info("[hitl] failed to mark task %s keep: %s" % (body.task_id, exc))
     if not broker.decide(body.task_id, body.approved):
-        print(
-            "[hitl] approve missed task_id=%s: no waiter in this process" % body.task_id,
-            flush=True,
-        )
+        log.info("[hitl] approve missed task_id=%s: no waiter in this process" % body.task_id)
         raise HTTPException(status_code=409, detail="no pending approval for this task")
     hub.publish(body.task_id, {
         "status": "approved" if body.approved else "rejected",
@@ -664,4 +645,8 @@ def run_task(task_id: int, body: RunRequest) -> dict:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(
+        app,
+        host=os.environ.get("SAFEAGENT_HOST", "127.0.0.1"),
+        port=int(os.environ.get("SAFEAGENT_PORT", "8000")),
+    )

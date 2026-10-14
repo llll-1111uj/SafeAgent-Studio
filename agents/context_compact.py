@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s06_context_compact.py - Compact
+context_compact.py - Compact
 
 Three-layer compression pipeline so the agent can work forever:
 
@@ -32,6 +32,14 @@ Three-layer compression pipeline so the agent can work forever:
 
 Key insight: "The agent can forget strategically and keep working forever."
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('context_compact')
 
 import json
 import os
@@ -101,7 +109,7 @@ def auto_compact(messages: list) -> list:
     with open(transcript_path, "w") as f:
         for msg in messages:
             f.write(json.dumps(msg, default=str) + "\n")
-    print(f"[transcript saved: {transcript_path}]")
+    log.info(f"[transcript saved: {transcript_path}]")
     # Ask LLM to summarize
     conversation_text = json.dumps(messages, default=str)[:80000]
     response = client.messages.create(
@@ -197,7 +205,7 @@ def agent_loop(messages: list):
         micro_compact(messages)
         # Layer 2: auto_compact if token estimate exceeds threshold
         if estimate_tokens(messages) > THRESHOLD:
-            print("[auto_compact triggered]")
+            log.info("[auto_compact triggered]")
             messages[:] = auto_compact(messages)
         response = client.messages.create(
             model=MODEL, system=SYSTEM, messages=messages,
@@ -219,12 +227,12 @@ def agent_loop(messages: list):
                         output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
                     except Exception as e:
                         output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
+                log.info(f"> {block.name}: {str(output)[:200]}")
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
         messages.append({"role": "user", "content": results})
         # Layer 3: manual compact triggered by the compact tool
         if manual_compact:
-            print("[manual compact]")
+            log.info("[manual compact]")
             messages[:] = auto_compact(messages)
 
 
@@ -243,5 +251,5 @@ if __name__ == "__main__":
         if isinstance(response_content, list):
             for block in response_content:
                 if hasattr(block, "text"):
-                    print(block.text)
-        print()
+                    log.info(block.text)
+        log.info("")

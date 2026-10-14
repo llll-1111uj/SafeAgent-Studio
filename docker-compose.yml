@@ -1,0 +1,21 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: safeagent-studio-api:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      SAFEAGENT_HOST: 0.0.0.0
+      SAFEAGENT_PORT: "8000"
+    volumes:
+      # Same tree the process uses for git archive, artifacts, and Chroma.
+      - .:/app
+      # Host Docker daemon. The API creates sibling sandbox containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /app
+    restart: unless-stopped
+    command: ["python", "main.py"]

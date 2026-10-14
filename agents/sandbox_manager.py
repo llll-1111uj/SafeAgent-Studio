@@ -12,6 +12,14 @@ Index file: {repo_root}/.worktrees/index.json, key "sandboxes".
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('sandbox_manager')
+
 import copy
 import json
 import os
@@ -240,7 +248,7 @@ class SandboxManager:
             return
         source = self.repo_root / ".worktrees" / "artifacts" / str(parent_task_id)
         if not source.is_dir():
-            print("[sandbox] no artifacts to restore parent_task_id=%s" % parent_task_id, flush=True)
+            log.info("[sandbox] no artifacts to restore parent_task_id=%s" % parent_task_id)
             return
         spec = source.as_posix().rstrip("/") + "/."
         self._run(["docker", "cp", spec, "%s:/workspace" % container_name], timeout=180)
@@ -250,10 +258,9 @@ class SandboxManager:
             container_name + "-restore-chown",
             helper_image,
         )
-        print(
+        log.info(
             "[sandbox] restored artifacts parent_task_id=%s container=%s"
-            % (parent_task_id, container_name),
-            flush=True,
+            % (parent_task_id, container_name)
         )
 
     def execute(self, sandbox_id: str, command: str) -> ExecResult:
@@ -377,7 +384,7 @@ class SandboxManager:
             shutil.rmtree(dest)
         dest.mkdir(parents=True)
         self._pipe_tar(pack_cmd, dest)
-        print("[sandbox] artifacts task_id=%s dir=%s" % (task_id, dest), flush=True)
+        log.info("[sandbox] artifacts task_id=%s dir=%s" % (task_id, dest))
         return str(dest)
 
     def _pipe_tar(self, pack_cmd: list[str], dest: Path) -> None:

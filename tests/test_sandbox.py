@@ -1,8 +1,14 @@
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
-from agents.sandbox_manager import SandboxManager, SandboxError  # 假设 SandboxError 在 sandbox_manager 中定义
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agents.sandbox_manager import SandboxManager, SandboxError
 
 def check_residuals(task_id):
     """检查该任务是否还留着容器或卷。

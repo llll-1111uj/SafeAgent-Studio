@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-s_full.py - Full Reference Agent
+full_agent.py - Full Reference Agent
 
 Capstone implementation combining every mechanism from s01-s11.
 Session s12 (task-aware worktree isolation) is taught separately.
@@ -34,6 +34,14 @@ NOT a teaching session -- this is the "put it all together" reference.
 
     REPL commands: /compact /tasks /team /inbox
 """
+
+import sys
+from pathlib import Path as _RepoPath
+_REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from utils.logger import get_logger
+log = get_logger('full_agent')
 
 import json
 import os
@@ -488,7 +496,7 @@ class TeammateManager:
                                         "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
                                         "edit_file": lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"])}
                             output = dispatch.get(block.name, lambda **kw: "Unknown")(**block.input)
-                        print(f"  [{name}] {block.name}: {str(output)[:120]}")
+                        log.info(f"  [{name}] {block.name}: {str(output)[:120]}")
                         results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
                 messages.append({"role": "user", "content": results})
                 if idle_requested:
@@ -658,7 +666,7 @@ def agent_loop(messages: list):
         # s06: compression pipeline
         microcompact(messages)
         if estimate_tokens(messages) > TOKEN_THRESHOLD:
-            print("[auto-compact triggered]")
+            log.info("[auto-compact triggered]")
             messages[:] = auto_compact(messages)
         # s08: drain background notifications
         notifs = BG.drain()
@@ -692,7 +700,7 @@ def agent_loop(messages: list):
                     output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
                 except Exception as e:
                     output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
+                log.info(f"> {block.name}: {str(output)[:200]}")
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
                 if block.name == "TodoWrite":
                     used_todo = True
@@ -703,7 +711,7 @@ def agent_loop(messages: list):
         messages.append({"role": "user", "content": results})
         # s06: manual compress
         if manual_compress:
-            print("[manual compact]")
+            log.info("[manual compact]")
             messages[:] = auto_compact(messages)
 
 
@@ -718,39 +726,39 @@ if __name__ == "__main__":
     reaper = None
     try:
         reaper = SandboxReaper(repo_root=WORKDIR)
-        print("[sandbox] reconciliation", reaper.startup_reconciliation())
+        log.info("[sandbox] reconciliation", reaper.startup_reconciliation())
         reaper.start()
-        print("[sandbox] reaper started, interval=5s, source=index deadline_ts")
+        log.info("[sandbox] reaper started, interval=5s, source=index deadline_ts")
     except SandboxError as exc:
-        print(f"[sandbox] reaper not started: {exc}")
+        log.info(f"[sandbox] reaper not started: {exc}")
         reaper = None
 
     history = []
     try:
         while True:
             try:
-                query = input("\033[36ms_full >> \033[0m")
+                query = input("\033[36mfull >> \033[0m")
             except (EOFError, KeyboardInterrupt):
                 break
             if query.strip().lower() in ("q", "exit", ""):
                 break
             if query.strip() == "/compact":
                 if history:
-                    print("[manual compact via /compact]")
+                    log.info("[manual compact via /compact]")
                     history[:] = auto_compact(history)
                 continue
             if query.strip() == "/tasks":
-                print(TASK_MGR.list_all())
+                log.info(TASK_MGR.list_all())
                 continue
             if query.strip() == "/team":
-                print(TEAM.list_all())
+                log.info(TEAM.list_all())
                 continue
             if query.strip() == "/inbox":
-                print(json.dumps(BUS.read_inbox("lead"), indent=2))
+                log.info(json.dumps(BUS.read_inbox("lead"), indent=2))
                 continue
             history.append({"role": "user", "content": query})
             agent_loop(history)
-            print()
+            log.info("")
     finally:
         if reaper is not None:
             reaper.stop()
