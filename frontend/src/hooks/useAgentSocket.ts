@@ -134,7 +134,7 @@ export function useAgentSocket() {
     };
   }, []);
 
-  const start = useCallback(async (prompt: string) => {
+  const start = useCallback(async (prompt: string, keepSandbox = false) => {
     const text = prompt.trim();
     if (!text || socketRef.current) {
       return;
@@ -222,6 +222,7 @@ export function useAgentSocket() {
         body: JSON.stringify({
           prompt: text,
           session_id: sessionRef.current,
+          keep_sandbox: keepSandbox,
           ...(parentTaskId !== null ? { parent_task_id: parentTaskId } : {}),
         }),
       });

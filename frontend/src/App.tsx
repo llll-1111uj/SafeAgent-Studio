@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Input, Spin, Typography } from "antd";
+import { Alert, Button, Checkbox, Input, Spin, Typography } from "antd";
 import ApprovalModal from "./ApprovalModal";
 import ResultCard from "./ResultCard";
 import { useAgentSocket } from "./hooks/useAgentSocket";
@@ -19,6 +19,7 @@ const TONE: Record<string, string> = {
 
 export default function App() {
   const [prompt, setPrompt] = useState("");
+  const [keepSandbox, setKeepSandbox] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const { taskId, sessionId, running, deciding, spinning, lines, phase, finalAnswer, pending, error, start, decide } = useAgentSocket();
 
@@ -57,11 +58,18 @@ export default function App() {
             type="primary"
             disabled={!prompt.trim() || running}
             onClick={() => {
-              void start(prompt);
+              void start(prompt, keepSandbox);
             }}
           >
             启动任务
           </Button>
+          <Checkbox
+            checked={keepSandbox}
+            disabled={running}
+            onChange={(event) => setKeepSandbox(event.target.checked)}
+          >
+            保留沙箱
+          </Checkbox>
           {spinning ? <Spin size="small" aria-label="正在处理" /> : null}
           {taskId !== null ? (
             <Typography.Text type="secondary">任务 {taskId} · 会话 {sessionId.slice(0, 8)}</Typography.Text>

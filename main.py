@@ -60,6 +60,7 @@ class RunRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     session_id: Optional[str] = None
     parent_task_id: Optional[int] = None
+    keep_sandbox: bool = False
 
 
 class Pending:
@@ -377,15 +378,15 @@ def _should_keep_sandbox(task_id: int) -> bool:
     if task_id in _keep_tasks:
         return True
     task = _load_task(task_id) or {}
-    return task.get("keep") is True
+    return task.get("keep_sandbox") is True or task.get("keep") is True
 
 
 def _release_sandbox(task_id: int) -> None:
-    """Destroy the lane after the terminal status has already been pushed.
+    """Stop or destroy the lane after the terminal status has already been pushed.
 
-    keep=True, or a HITL choice to retain the sandbox, stops the container
-    and keeps the volumes for 24 hours. Otherwise the container and both
-    volumes are removed immediately.
+    keep_sandbox on the task file, or a HITL choice to retain the sandbox,
+    stops the container and keeps the volumes for 24 hours. Otherwise the
+    container and both volumes are removed immediately.
     """
     container = _container_for_task(task_id)
     try:
@@ -630,6 +631,7 @@ def run_task(task_id: int, body: RunRequest) -> dict:
     session_id = _session_id_of(body.session_id)
     parent_task_id = _parent_task_id_of(body.parent_task_id, task_id)
     try:
+        _update_task(task_id, keep_sandbox=body.keep_sandbox)
         threading.Thread(
             target=_agent_thread,
             args=(task_id, body.prompt, session_id, parent_task_id),

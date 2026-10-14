@@ -47,16 +47,27 @@ client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
 
 SYSTEM = (
-    "最高优先级：当用户明确要求执行命令、安装依赖、查看目录或验证文件时，"
-    "你必须调用 bash 工具获取真实结果。"
-    "绝对禁止在未调用工具的情况下，在最终答案中伪造终端输出、错误堆栈或命令执行结果"
-    "（如 $ 提示符、ERROR: 等前缀）。"
-    "如果你不调用工具，系统将判定任务失败。"
+    "【绝对红线】当用户的指令包含执行、运行、安装、查看、读取等动作词时，"
+    "你必须调用 bash、write_file 等工具获取真实结果。"
+    "绝对禁止在未调用工具的情况下，在最终回答里伪造终端提示符（如 $, >）或错误堆栈（如 ERROR:, Traceback）。"
+    "如果用户是在要求解释、讲解、科普，或在问「是什么」，可以直接回答，不必调用工具。"
     f"You are a coding agent at {os.getcwd()}. Use bash to solve tasks. Act, don't explain."
 )
 
-_COMMAND_ACTION = re.compile(r"执行|运行|安装|\binstall\b|\bpwd\b|\bls\b", re.IGNORECASE)
-_TOOL_NUDGE = "你还没有调用任何工具，请立即调用 bash 执行命令并获取真实结果"
+_COMMAND_ACTION = re.compile(
+    r"执行|运行|安装|查看|读取|\bpip\b|\bls\b|\bpwd\b",
+    re.IGNORECASE,
+)
+_EXPLAIN_TASK = re.compile(r"解释|讲解|是什么|科普")
+_TOOL_NUDGE = (
+    "系统检测到用户要求执行操作，但你未调用任何工具。"
+    "请立刻调用 bash 工具执行真实命令，不要凭记忆编造结果。"
+)
+_FABRICATION_ERROR = (
+    "Error: Agent attempted to fabricate execution output without calling tools. "
+    "Task aborted for safety."
+)
+_TOOL_RETRIES = 2
 
 
 def _latest_user_text(messages: list) -> str:
@@ -70,9 +81,41 @@ def _latest_user_text(messages: list) -> str:
     return ""
 
 
-def _prompt_requires_tool(messages: list) -> bool:
-    """True when the user asked to run, install, or inspect via a real command."""
-    return bool(_COMMAND_ACTION.search(_latest_user_text(messages)))
+def _history_has_tool_call(messages: list) -> bool:
+    """True when any assistant turn contains a tool_use block."""
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict):
+                kind = block.get("type")
+            else:
+                kind = getattr(block, "type", None)
+            if kind == "tool_use":
+                return True
+    return False
+
+
+def _validate_tool_execution(prompt: str, messages: list, retries: int) -> str:
+    """Gate a final answer that never called a tool.
+
+    "" allows completion. The nudge continues the loop, at most twice.
+    The safety error replaces the fabricated answer.
+    Explanatory prompts may finish with no tool call.
+    """
+    text = prompt or ""
+    if _EXPLAIN_TASK.search(text):
+        return ""
+    if not _COMMAND_ACTION.search(text):
+        return ""
+    if _history_has_tool_call(messages):
+        return ""
+    if retries < _TOOL_RETRIES:
+        return _TOOL_NUDGE
+    return _FABRICATION_ERROR
 
 TOOLS = [{
     "name": "bash",
@@ -101,9 +144,8 @@ def run_bash(command: str) -> str:
 # -- The core pattern: a while loop that calls tools until the model stops --
 def agent_loop(messages: list):
     system = SYSTEM
-    requires_tool = _prompt_requires_tool(messages)
-    used_tool = False
-    nudged = False
+    user_prompt = _latest_user_text(messages)
+    retries = 0
     while True:
         response = client.messages.create(
             model=MODEL, system=system, messages=messages,
@@ -114,20 +156,21 @@ def agent_loop(messages: list):
         # If the model didn't call a tool, we're done — unless the prompt
         # asked for a real command and none has run yet.
         if response.stop_reason != "tool_use":
-            if requires_tool and not used_tool:
-                if not nudged:
-                    nudged = True
-                    system = system + "\n" + _TOOL_NUDGE
-                    messages.append({"role": "user", "content": _TOOL_NUDGE})
-                    log.info("[agent] blocked completion without a tool call")
-                    continue
-                raise RuntimeError("任务失败：要求执行命令但未调用任何工具")
+            verdict = _validate_tool_execution(user_prompt, messages, retries)
+            if verdict == _TOOL_NUDGE:
+                retries += 1
+                system = system + "\n" + verdict
+                messages.append({"role": "user", "content": verdict})
+                log.info("[agent] tool execution required retry=%s" % retries)
+                continue
+            if verdict:
+                log.info("[agent] hallucination_intercepted")
+                messages[-1] = {"role": "assistant", "content": verdict}
             return
         # Execute each tool call, collect results
         results = []
         for block in response.content:
             if block.type == "tool_use":
-                used_tool = True
                 log.info(f"\033[33m$ {block.input['command']}\033[0m")
                 output = run_bash(block.input["command"])
                 log.info(output[:200])
