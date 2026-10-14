@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import math
 import os
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -90,38 +89,21 @@ def _clip(text: str, limit: int) -> str:
 
 
 def new_artifact_names(repo_root: Path, task_id: int) -> list[str]:
-    """Names exported for this task that are not already tracked by git."""
+    """Names the sandbox export kept for this task.
+
+    The export already drops the git-archive baseline, so this list is the
+    new and modified files, not the whole repository.
+    """
     root = Path(repo_root) / ".worktrees" / "artifacts" / str(task_id)
     if not root.is_dir():
         return []
-    tracked: set[str] = set()
-    try:
-        completed = subprocess.run(
-            ["git", "ls-files"],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        log.error("[memory] git ls-files failed: %s" % exc)
-        return []
-    if completed.returncode != 0:
-        log.error("[memory] git ls-files failed: %s" % completed.stderr.strip())
-        return []
-    tracked = {
-        line.strip().replace("\\", "/")
-        for line in completed.stdout.splitlines()
-        if line.strip()
-    }
     names: list[str] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
         parts = rel.split("/")
-        if rel in tracked or "__pycache__" in parts or ".git" in parts:
+        if "__pycache__" in parts or ".git" in parts or "node_modules" in parts:
             continue
         names.append(rel)
         if len(names) >= _FILE_LIMIT:

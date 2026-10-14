@@ -52,6 +52,11 @@ client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
 
 SYSTEM = (
+    "最高优先级：当用户明确要求执行命令、安装依赖、查看目录或验证文件时，"
+    "你必须调用 bash 工具获取真实结果。"
+    "绝对禁止在未调用工具的情况下，在最终答案中伪造终端输出、错误堆栈或命令执行结果"
+    "（如 $ 提示符、ERROR: 等前缀）。"
+    "如果你不调用工具，系统将判定任务失败。"
     f"You are a coding agent at {WORKDIR}. "
     "bash, read_file, write_file, and edit_file run inside the bound sandbox "
     "at /workspace. Refuse them when the current task has no active sandbox. "
@@ -60,6 +65,8 @@ SYSTEM = (
     "如果遇到缺失依赖，请使用纯 Python 或本地已有库降级实现。"
     "如果用户询问实时信息（天气、新闻、股票），请优先调用 web_search 工具获取数据，"
     "而不是尝试在沙箱内 curl 或 wget。"
+    "你的所有代码产物必须写入 /workspace/outputs/ 目录，否则产物将无法被保存。"
+    "edit_file 也只能改 outputs/ 里的文件；要改已有文件时，先把它 cp 到 outputs/ 再改。"
 )
 
 _sandbox = None
@@ -614,8 +621,26 @@ def run_read(path: str, limit: int = None) -> str:
     return run_file_op("read", path, limit_arg)
 
 
+_OUTPUTS_ERROR = (
+    "Error: files must be written under /workspace/outputs/. "
+    "Copy an existing file into outputs/ before edit_file. "
+    "Files outside outputs/ are not saved."
+)
+
+
+def _require_outputs(path: str) -> str:
+    """write_file and edit_file only accept /workspace/outputs/<file>."""
+    rel = workspace_rel(path).lstrip("./")
+    if rel == "outputs" or not rel.startswith("outputs/"):
+        return _OUTPUTS_ERROR
+    return ""
+
+
 def run_write(path: str, content: str) -> str:
     denied = _ready_for_tool(path)
+    if denied:
+        return denied
+    denied = _require_outputs(path)
     if denied:
         return denied
     if not _write_is_auto(path):
@@ -629,6 +654,9 @@ def run_write(path: str, content: str) -> str:
 
 def run_edit(path: str, old_text: str, new_text: str) -> str:
     denied = _ready_for_tool(path)
+    if denied:
+        return denied
+    denied = _require_outputs(path)
     if denied:
         return denied
     denied = wait_for_approval("edit_file", path)
@@ -819,9 +847,9 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
     {"name": "read_file", "description": "Read a file under the bound sandbox /workspace.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
-    {"name": "write_file", "description": "Write a file under the bound sandbox /workspace.",
+    {"name": "write_file", "description": "Write a file under /workspace/outputs/. Other paths are rejected and are not saved.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
-    {"name": "edit_file", "description": "Replace exact text in a file under the bound sandbox /workspace.",
+    {"name": "edit_file", "description": "Replace exact text in a file under /workspace/outputs/. Copy an existing file into outputs/ before editing it.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
     {"name": "web_search", "description": "Look up live weather, news, or stock quotes from the host via Bing China, with Baidu as fallback. The sandbox has no network. For weather, include the city, for example 吉林天气.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
@@ -849,11 +877,48 @@ def _final_text(content) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
+_COMMAND_ACTION = re.compile(r"执行|运行|安装|\binstall\b|\bpwd\b|\bls\b", re.IGNORECASE)
+_TOOL_NUDGE = "你还没有调用任何工具，请立即调用 bash 执行命令并获取真实结果"
+
+
+def _latest_user_text(messages: list) -> str:
+    """Text of the newest user turn. Tool-result turns are skipped."""
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+        if not isinstance(content, list):
+            continue
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+                continue
+            if not isinstance(block, dict) or block.get("type") not in (None, "text"):
+                continue
+            text = block.get("text")
+            if text:
+                parts.append(str(text))
+        if parts:
+            return "\n".join(parts)
+    return ""
+
+
+def _prompt_requires_tool(messages: list) -> bool:
+    """True when the user asked to run, install, or inspect via a real command."""
+    return bool(_COMMAND_ACTION.search(_latest_user_text(messages)))
+
+
 def agent_loop(messages: list, system_extra=""):
     system = SYSTEM
     extra = system_extra.strip() if isinstance(system_extra, str) else ""
     if extra:
         system = SYSTEM + "\n\n" + extra
+    requires_tool = _prompt_requires_tool(messages)
+    used_tool = False
+    nudged = False
     try:
         while True:
             publish_status("thinking", "model request")
@@ -863,6 +928,14 @@ def agent_loop(messages: list, system_extra=""):
             )
             messages.append({"role": "assistant", "content": response.content})
             if response.stop_reason != "tool_use":
+                if requires_tool and not used_tool:
+                    if not nudged:
+                        nudged = True
+                        system = system + "\n" + _TOOL_NUDGE
+                        messages.append({"role": "user", "content": _TOOL_NUDGE})
+                        log.info("[agent] blocked completion without a tool call")
+                        continue
+                    raise RuntimeError("任务失败：要求执行命令但未调用任何工具")
                 publish_status(
                     "completed",
                     "task finished",
@@ -872,6 +945,7 @@ def agent_loop(messages: list, system_extra=""):
             results = []
             for block in response.content:
                 if block.type == "tool_use":
+                    used_tool = True
                     publish_status("tool_call", block.name, action=block.name)
                     handler = TOOL_HANDLERS.get(block.name)
                     try:
