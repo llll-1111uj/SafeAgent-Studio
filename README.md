@@ -4,12 +4,12 @@
 
 ## 架构设计理念
 
-**无状态计算。** 沙箱不保存计算过程。一个任务对应一个容器，正常结束或失败后立刻销毁。工作区来自 git 归档，不是上一只容器的残留进程。需要调试时，审批弹窗里可以勾选保留沙箱，容器会停掉、卷再留 24 小时。
+**无状态计算。** 沙箱不保存计算过程。一个任务对应一个容器，正常结束或失败后立刻销毁。工作区来自 git 归档，不是上一只容器的残留进程。需要调试时，启动任务前勾选「保留沙箱」，容器会停掉、卷再留 24 小时。
 
 **有状态记忆。** 计算可以丢掉，结论不能丢。记忆分三层：
 
 - 短期会话：按 `session_id` 记住本轮用户原话和助手最终回复。上下文大约超过 5000 token 时，更早的轮次会被收成一段摘要。这份状态在控制面进程内存里。
-- 物理产物：删除容器之前，把 `/workspace` 导出到 `.worktrees/artifacts/{task_id}/`。下一轮带着 `parent_task_id` 创建沙箱时，这些文件会被拷回 `/workspace`。
+- 物理产物：删除容器之前，把 `/workspace/outputs/` 导出到 `.worktrees/artifacts/{task_id}/`。下一轮带着 `parent_task_id` 创建沙箱时，这些文件会被拷回 `/workspace`。
 - 长期检索：任务成功后，把请求、最终回答和新增产物文件名写入本地 Chroma（`.worktrees/chroma_db/`）。新任务启动时取出最相似的 3 条，放进这一次调用的 System Prompt。
 
 **双层安全防线。**
@@ -28,18 +28,6 @@ utils/logger.py              控制台和 logs/app.log
 agents/core_agent.py         正在运行的工具循环
 agents/sandbox_manager.py    沙箱创建、导出、恢复和销毁
 agents/docker/Dockerfile     沙箱镜像 safeagent-sandbox:py310
-agents/full_agent.py         把规划、子任务、团队和压缩放在一起的参考实现
-agents/agent_loop.py         最小循环
-agents/todo_planner.py       步骤清单
-agents/subagent.py           子任务
-agents/skill_loader.py       按需加载技能
-agents/context_compact.py    上下文压缩
-agents/task_graph.py         持久化任务图
-agents/background_tasks.py   后台命令
-agents/agent_teams.py        多智能体
-agents/team_protocols.py     团队协议
-agents/autonomous_agents.py  自主认领
-agents/worktree_isolation.py 任务目录隔离
 frontend/                    React + Vite 工作台，单独启动
 tests/                       沙箱、工具和审批脚本
 Dockerfile                   控制面镜像
