@@ -32,6 +32,7 @@ import json
 import os
 import re
 import shlex
+import threading
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -40,6 +41,7 @@ from urllib.parse import quote
 import requests
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from context_compact import compact_repeated_failures
 from sandbox_manager import SandboxError, SandboxManager
 
 load_dotenv(override=True)
@@ -64,12 +66,17 @@ SYSTEM = (
     "如果遇到缺失依赖，请使用纯 Python 或本地已有库降级实现。"
     "如果用户询问实时信息（天气、新闻、股票），请优先调用 web_search 工具获取数据，"
     "而不是尝试在沙箱内 curl 或 wget。"
-    "你的所有代码产物必须写入 /workspace/outputs/ 目录，否则产物将无法被保存。"
-    "edit_file 也只能改 outputs/ 里的文件；要改已有文件时，先把它 cp 到 outputs/ 再改。"
+    "工作目录是 /workspace。所有新建或编辑的文件必须放在 outputs/ 子目录下。"
+    "请使用相对路径，例如 outputs/test.py。严禁使用绝对路径，严禁使用 cd 命令切换目录。"
 )
 
 _sandbox = None
 _task_id = contextvars.ContextVar("safeagent_task_id", default=None)
+_parent_task_id = contextvars.ContextVar("safeagent_parent_task_id", default=None)
+_approval_state = contextvars.ContextVar("safeagent_approval", default="auto")
+_SECRET_VALUE = re.compile(
+    r"(?i)(api[_-]?key|token|secret)\s*=\s*\S+|sk-[A-Za-z0-9_\-]{8,}"
+)
 _approval_waiter = None
 _status_publisher = None
 _WIN_PATH = re.compile(r"[A-Za-z]:\\[^\s\"']+")
@@ -129,6 +136,15 @@ def set_task_id(task_id: int):
 
 def reset_task_id(token) -> None:
     _task_id.reset(token)
+
+
+def set_parent_task_id(parent_task_id):
+    """Remember which artifacts to copy in when the sandbox is created later."""
+    return _parent_task_id.set(parent_task_id)
+
+
+def reset_parent_task_id(token) -> None:
+    _parent_task_id.reset(token)
 
 
 def set_approval_waiter(waiter) -> None:
@@ -195,55 +211,168 @@ def wait_for_approval(action: str, args_preview: str):
     waiter = _approval_waiter
     task_id = _task_id.get()
     if waiter is None or task_id is None:
+        _approval_state.set("auto")
         return None
     try:
         decision = waiter(task_id, action, args_preview)
     except Exception as exc:
         return tool_error(exc)
     if decision is None:
+        _approval_state.set("timeout")
         return "Approval timed out, action denied"
     if not decision:
+        _approval_state.set("rejected")
         return "Error: %s rejected" % action
+    _approval_state.set("approved")
     return None
 
 
+def _one_line(text, limit: int = 200) -> str:
+    """Single log line with secret values removed."""
+    flat = " ".join(str(text or "").split())
+    flat = _SECRET_VALUE.sub("[redacted]", flat)
+    if len(flat) <= limit:
+        return flat
+    return flat[:limit] + "..."
+
+
+def _args_summary(name: str, tool_input) -> str:
+    """Short tool arguments. File bodies stay out of the trace."""
+    if not isinstance(tool_input, dict):
+        return _one_line(tool_input)
+    if name in ("write_file", "edit_file", "read_file"):
+        return _one_line(tool_input.get("path") or "")
+    if name == "bash":
+        return _one_line(tool_input.get("command") or "")
+    if name == "web_search":
+        return _one_line(tool_input.get("query") or "")
+    return _one_line(json.dumps(tool_input, ensure_ascii=False))
+
+
+def _append_tool_trace(name: str, args: str, approval: str, result: str, elapsed_ms: int) -> None:
+    """One JSON object per tool call, keyed by task_id. Not app.log."""
+    task_id = _task_id.get()
+    if task_id is None:
+        return
+    path = WORKDIR / ".worktrees" / "traces" / ("%s.jsonl" % task_id)
+    row = {
+        "task_id": int(task_id),
+        "tool": name,
+        "args": args,
+        "approval": approval,
+        "result": result,
+        "ms": int(elapsed_ms),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        log.info("[tool] trace write failed task_id=%s: %s" % (task_id, exc))
+
+
+def _log_tool_step(name: str, output: str, approval: str, result: str, elapsed_ms: int) -> None:
+    task_id = _task_id.get()
+    line = "[tool] task_id=%s tool=%s result=%s approval=%s ms=%s output=%s" % (
+        task_id, name, result, approval, int(elapsed_ms), _one_line(output),
+    )
+    if result == "error":
+        log.warning(line)
+        return
+    log.info(line)
+
+
+def _load_task_record(task_id: int) -> dict:
+    path = WORKDIR / ".tasks" / ("task_%s.json" % task_id)
+    if not path.is_file():
+        return {}
+    try:
+        task = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return task if isinstance(task, dict) else {}
+
+
+def _container_named(task_id: int, worktree: str) -> str:
+    index_path = WORKDIR / ".worktrees" / "index.json"
+    if not worktree or not index_path.is_file():
+        return ""
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    for item in data.get("sandboxes", []):
+        if item.get("task_id") == task_id and item.get("name") == worktree and item.get("status") == "active":
+            return str(item.get("container_name") or "")
+    return ""
+
+
+def _parent_for_lazy_create(task_id: int):
+    parent = _parent_task_id.get()
+    if not isinstance(parent, int) or isinstance(parent, bool):
+        stored = _load_task_record(task_id).get("parent_task_id")
+        parent = stored if isinstance(stored, int) and not isinstance(stored, bool) else None
+    if not isinstance(parent, int) or isinstance(parent, bool) or parent < 1 or parent == task_id:
+        return None
+    return parent
+
+
+def _lazy_create_sandbox(task_id: int) -> str:
+    """Create the lane on the first sandbox tool call. Not used for web_search."""
+    name = "agent-%s" % task_id
+    parent = _parent_for_lazy_create(task_id)
+    log.info("[sandbox] lazy create task_id=%s name=%s parent_task_id=%s" % (task_id, name, parent))
+    try:
+        saved = get_sandbox().create_sandbox(name, task_id, parent_task_id=parent)
+    except (SandboxError, ValueError) as exc:
+        log.info("[sandbox] lazy create failed task_id=%s: %s" % (task_id, exc))
+        raise RuntimeError(tool_error(exc)) from exc
+    container = str(saved.get("container_name") or "")
+    if not container:
+        raise RuntimeError("Error: current task has no bound sandbox")
+    log.info("[sandbox] lazy create after task_id=%s container=%s" % (task_id, container))
+    return container
+
+
+_lazy_ready = {}
+_lazy_lock = threading.Lock()
+
+
 def require_bound_sandbox() -> str:
-    """Return the active container name for the single in-progress bound task."""
+    """Return the active container, creating it the first time this task needs one.
+
+    With no task_id, only an already bound in-progress task is accepted.
+    That keeps CLI tests from starting a container by accident.
+    """
+    task_id = _task_id.get()
+    if task_id is not None:
+        with _lazy_lock:
+            cached = _lazy_ready.get(task_id)
+            if cached:
+                return cached
+            task = _load_task_record(task_id)
+            container = _container_named(task_id, str(task.get("worktree") or "").strip())
+            if not container:
+                container = _lazy_create_sandbox(task_id)
+            _lazy_ready[task_id] = container
+            return container
     tasks_dir = WORKDIR / ".tasks"
-    bound = []
+    current = []
     if tasks_dir.is_dir():
         for path in sorted(tasks_dir.glob("task_*.json")):
             try:
                 task = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            if isinstance(task, dict) and str(task.get("worktree") or "").strip():
-                bound.append(task)
-    wanted = _task_id.get()
-    if wanted is not None:
-        current = [
-            task for task in bound
-            if task.get("id") == wanted and task.get("status") == "in_progress"
-        ]
-    else:
-        current = [task for task in bound if task.get("status") == "in_progress"]
+            if isinstance(task, dict) and task.get("status") == "in_progress" and str(task.get("worktree") or "").strip():
+                current.append(task)
     if len(current) != 1:
         raise RuntimeError("Error: current task has no bound sandbox")
     task = current[0]
-    index_path = WORKDIR / ".worktrees" / "index.json"
-    if not index_path.is_file():
+    container = _container_named(task.get("id"), str(task.get("worktree") or ""))
+    if not container:
         raise RuntimeError("Error: current task has no bound sandbox")
-    try:
-        data = json.loads(index_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError("Error: current task has no bound sandbox") from exc
-    match = None
-    for item in data.get("sandboxes", []):
-        if item.get("task_id") == task.get("id") and item.get("name") == task.get("worktree"):
-            match = item
-    if not match or match.get("status") != "active" or not match.get("container_name"):
-        raise RuntimeError("Error: current task has no bound sandbox")
-    return match["container_name"]
+    return container
 
 
 _PATH_HINT = (
@@ -301,12 +430,15 @@ def run_file_op(op: str, path: str, *args: str) -> str:
 
 
 def _ready_for_tool(path: str = "") -> str:
-    """Return an error string when the tool must not run, else ""."""
+    """Return an error string when the path is illegal, else "".
+
+    The sandbox is created later, on the first real exec, so a rejected
+    approval does not start a container.
+    """
     try:
         if path:
             workspace_rel(path)
-        require_bound_sandbox()
-    except (RuntimeError, ValueError) as exc:
+    except ValueError as exc:
         return tool_error(exc)
     return ""
 
@@ -620,26 +752,48 @@ def run_read(path: str, limit: int = None) -> str:
     return run_file_op("read", path, limit_arg)
 
 
-_OUTPUTS_ERROR = (
-    "Error: files must be written under /workspace/outputs/. "
-    "Copy an existing file into outputs/ before edit_file. "
-    "Files outside outputs/ are not saved."
+_ABSOLUTE_PATH_ERROR = "Error: 不允许使用绝对路径。请使用相对路径，例如 outputs/test.py。"
+_OUTPUTS_PATH_ERROR = (
+    "Error: 路径错误。请使用相对路径重试，示例：write_file('outputs/test.py', ...)。"
+    "文件必须保存在 outputs/ 目录下。"
 )
+_ABORT_MESSAGE = "无法完成，请检查工具参数或路径规则"
+_TOOL_FAIL_LIMIT = 3
 
 
-def _require_outputs(path: str) -> str:
-    """write_file and edit_file only accept /workspace/outputs/<file>."""
-    rel = workspace_rel(path).lstrip("./")
-    if rel == "outputs" or not rel.startswith("outputs/"):
-        return _OUTPUTS_ERROR
+def _is_absolute_path(path: str) -> bool:
+    if not path or path.startswith(("/", "\\")):
+        return bool(path)
+    if len(path) >= 2 and path[1] == ":":
+        return True
+    return Path(path).is_absolute()
+
+
+def _check_output_path(path: str) -> str:
+    """Error text for write_file and edit_file. Empty when the path is allowed."""
+    if _is_absolute_path(path or ""):
+        return _ABSOLUTE_PATH_ERROR
+    try:
+        rel = workspace_rel(path)
+    except ValueError:
+        return _OUTPUTS_PATH_ERROR
+    parts = [part for part in rel.replace("\\", "/").split("/") if part and part != "."]
+    if ".." in parts or len(parts) < 2 or parts[0] != "outputs":
+        return _OUTPUTS_PATH_ERROR
     return ""
 
 
+def _tool_call_failed(output) -> bool:
+    return isinstance(output, str) and (
+        output.startswith("Error:") or output.startswith("Approval timed out")
+    )
+
+
 def run_write(path: str, content: str) -> str:
-    denied = _ready_for_tool(path)
+    denied = _check_output_path(path)
     if denied:
         return denied
-    denied = _require_outputs(path)
+    denied = _ready_for_tool(path)
     if denied:
         return denied
     if not _write_is_auto(path):
@@ -652,10 +806,10 @@ def run_write(path: str, content: str) -> str:
 
 
 def run_edit(path: str, old_text: str, new_text: str) -> str:
-    denied = _ready_for_tool(path)
+    denied = _check_output_path(path)
     if denied:
         return denied
-    denied = _require_outputs(path)
+    denied = _ready_for_tool(path)
     if denied:
         return denied
     denied = wait_for_approval("edit_file", path)
@@ -846,9 +1000,9 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
     {"name": "read_file", "description": "Read a file under the bound sandbox /workspace.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["path"]}},
-    {"name": "write_file", "description": "Write a file under /workspace/outputs/. Other paths are rejected and are not saved.",
+    {"name": "write_file", "description": "Write a file under outputs/ using a relative path, for example outputs/test.py. Absolute paths are rejected.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
-    {"name": "edit_file", "description": "Replace exact text in a file under /workspace/outputs/. Copy an existing file into outputs/ before editing it.",
+    {"name": "edit_file", "description": "Replace exact text in a file under outputs/. Use a relative path such as outputs/test.py.",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
     {"name": "web_search", "description": "Look up live weather, news, or stock quotes from the host via Bing China, with Baidu as fallback. The sandbox has no network. For weather, include the city, for example 吉林天气.",
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
@@ -961,13 +1115,20 @@ def agent_loop(messages: list, system_extra=""):
         system = SYSTEM + "\n\n" + extra
     user_prompt = _latest_user_text(messages)
     retries = 0
+    fail_tool = ""
+    fail_count = 0
     try:
         while True:
+            compact_repeated_failures(messages)
             publish_status("thinking", "model request")
             response = client.messages.create(
                 model=MODEL, system=system, messages=messages,
                 tools=TOOLS, max_tokens=8000,
             )
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                log.info("[agent] usage task_id=%s input_tokens=%s output_tokens=%s"
+                    % (_task_id.get(), getattr(usage, "input_tokens", ""), getattr(usage, "output_tokens", "")))
             messages.append({"role": "assistant", "content": response.content})
             if response.stop_reason != "tool_use":
                 verdict = _validate_tool_execution(user_prompt, messages, retries)
@@ -997,17 +1158,44 @@ def agent_loop(messages: list, system_extra=""):
                 if block.type == "tool_use":
                     publish_status("tool_call", block.name, action=block.name)
                     handler = TOOL_HANDLERS.get(block.name)
+                    _approval_state.set("auto")
+                    started = time.perf_counter()
                     try:
                         output = handler(**block.input) if handler else "Unknown tool: %s" % block.name
                     except Exception as exc:
                         output = tool_error(exc)
-                    if isinstance(output, str) and output.startswith("Error:"):
-                        preview = output if len(output) <= 500 else output[:500] + "..."
+                    elapsed_ms = int((time.perf_counter() - started) * 1000)
+                    result = "error" if _tool_call_failed(output) else "ok"
+                    approval = _approval_state.get()
+                    args_summary = _args_summary(block.name, getattr(block, "input", {}) or {})
+                    _append_tool_trace(block.name, args_summary, approval, result, elapsed_ms)
+                    _log_tool_step(block.name, output, approval, result, elapsed_ms)
+                    preview = _one_line(output, 500)
+                    if result == "error":
                         publish_status("tool_result", preview, action=block.name)
                     else:
                         publish_status("tool_result", block.name, action=block.name)
-                    log.info("> %s: %s" % (block.name, output[:200]))
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+                    if _tool_call_failed(output):
+                        if block.name == fail_tool:
+                            fail_count += 1
+                        else:
+                            fail_tool = block.name
+                            fail_count = 1
+                        if fail_count >= _TOOL_FAIL_LIMIT:
+                            messages.append({"role": "user", "content": results})
+                            messages.append({"role": "assistant", "content": _ABORT_MESSAGE})
+                            log.info("[agent] abort consecutive failures tool=%s count=%s"
+                                % (fail_tool, fail_count))
+                            publish_status(
+                                "completed",
+                                _ABORT_MESSAGE,
+                                final_answer=_ABORT_MESSAGE,
+                            )
+                            return
+                    else:
+                        fail_tool = ""
+                        fail_count = 0
             messages.append({"role": "user", "content": results})
     except Exception as exc:
         publish_status("error", tool_error(exc))

@@ -296,7 +296,11 @@ def _parent_task_id_of(value: Optional[int], task_id: int) -> Optional[int]:
 
 
 def _ensure_sandbox(task_id: int, parent_task_id: Optional[int] = None) -> bool:
-    """Create and bind a sandbox. Return False when the agent must not start."""
+    """Create and bind a sandbox. The agent thread does not call this.
+
+    The first bash, read_file, write_file, or edit_file creates the lane
+    from inside the tool. web_search never does.
+    """
     task = _load_task(task_id) or {}
     bound_name = str(task.get("worktree") or "").strip()
     if task.get("status") == "in_progress" and bound_name:
@@ -318,8 +322,8 @@ def _ensure_sandbox(task_id: int, parent_task_id: Optional[int] = None) -> bool:
         _mark_task_failed(task_id, str(exc))
         agent.publish_status("error", agent.tool_error(exc))
         return False
-    log.info("[sandbox] create_sandbox after task_id=%s return=%s"
-        % (task_id, json.dumps(saved, ensure_ascii=False)))
+    log.info("[sandbox] create_sandbox after task_id=%s container=%s status=%s"
+        % (task_id, saved.get("container_name"), saved.get("status")))
     try:
         _bind_sandbox(task_id, saved)
     except (OSError, json.JSONDecodeError, SandboxError) as exc:
@@ -438,14 +442,15 @@ def _summarize_turns(older: list) -> str:
 def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Optional[int]) -> None:
     # contextvars do not cross into a new thread. Set the id here.
     token = agent.set_task_id(task_id)
+    parent_token = agent.set_parent_task_id(parent_task_id)
     messages = _sessions.messages_for(session_id, prompt, _summarize_turns)
     answer = ""
     completed = False
     try:
-        _update_task(task_id, stdout="", error="", session_id=session_id)
-        if not _ensure_sandbox(task_id, parent_task_id):
-            answer = "上一轮没有完成：沙箱未能创建。"
-            return
+        remembered = {"stdout": "", "error": "", "session_id": session_id}
+        if parent_task_id:
+            remembered["parent_task_id"] = parent_task_id
+        _update_task(task_id, **remembered)
         system_extra = ""
         try:
             system_extra = _memory.recall(prompt)
@@ -482,6 +487,7 @@ def _agent_thread(task_id: int, prompt: str, session_id: str, parent_task_id: Op
                 )
             except Exception as exc:
                 log.info("[memory] remember failed task_id=%s: %s" % (task_id, exc))
+        agent.reset_parent_task_id(parent_token)
         agent.reset_task_id(token)
         with _runs_lock:
             _running.discard(task_id)
@@ -568,6 +574,7 @@ def approve(body: ApproveRequest) -> dict:
     if not broker.decide(body.task_id, body.approved):
         log.info("[hitl] approve missed task_id=%s: no waiter in this process" % body.task_id)
         raise HTTPException(status_code=409, detail="no pending approval for this task")
+    log.info("[hitl] %s task_id=%s" % ("approved" if body.approved else "rejected", body.task_id))
     hub.publish(body.task_id, {
         "status": "approved" if body.approved else "rejected",
         "task_id": body.task_id,

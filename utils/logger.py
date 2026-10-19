@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
@@ -26,7 +27,12 @@ def configure_logging(repo_root: Optional[Path] = None) -> logging.Logger:
     formatter = logging.Formatter(_FORMAT, datefmt=_DATE)
     stream = logging.StreamHandler(sys.stdout)
     stream.setFormatter(formatter)
-    file_handler = logging.FileHandler(log_dir / "app.log", encoding="utf-8")
+    file_handler = RotatingFileHandler(
+        log_dir / "app.log",
+        maxBytes=1_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
     file_handler.setFormatter(formatter)
     logger.addHandler(stream)
     logger.addHandler(file_handler)

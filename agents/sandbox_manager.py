@@ -216,6 +216,7 @@ class SandboxManager:
                 output_volume,
                 helper_image,
             )
+            self._ensure_outputs_dir(container_name)
             entry["container_id"] = container_id
             entry["status"] = "active"
             entry["error"] = ""
@@ -262,6 +263,24 @@ class SandboxManager:
             "[sandbox] restored artifacts parent_task_id=%s container=%s"
             % (parent_task_id, container_name)
         )
+
+    def _ensure_outputs_dir(self, container_name: str) -> None:
+        """Create /workspace/outputs before the agent loop starts.
+
+        This is sandbox initialization. It runs as uid 1000 inside the
+        container and does not go through the approval waiter.
+        """
+        self._run(
+            [
+                "docker", "exec",
+                "-u", "1000:1000",
+                "-w", "/workspace",
+                container_name,
+                "mkdir", "-p", "outputs",
+            ],
+            timeout=30,
+        )
+        log.info("[sandbox] outputs ready container=%s" % container_name)
 
     def execute(self, sandbox_id: str, command: str) -> ExecResult:
         """Run command in /workspace as uid 1000.

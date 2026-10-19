@@ -26,6 +26,8 @@ from chromadb.config import Settings
 
 _DIM = 256
 _TOP_K = 3
+# Cosine distance from this collection: larger means less similar. Above this, do not inject.
+_DISTANCE_MAX = 0.7
 _DOC_LIMIT = 1500
 _INJECT_LIMIT = 700
 _FILE_LIMIT = 40
@@ -81,6 +83,32 @@ class LocalCharNgramEmbedding(EmbeddingFunction[Documents]):
         return [_embed(text) for text in input]
 
 
+def _distance_limit(value: Optional[float]) -> float:
+    """Threshold from the caller, else MEMORY_DISTANCE_MAX, else 0.7."""
+    if value is None:
+        raw = os.environ.get("MEMORY_DISTANCE_MAX", "").strip()
+        if not raw:
+            return _DISTANCE_MAX
+        try:
+            value = float(raw)
+        except ValueError:
+            return _DISTANCE_MAX
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return _DISTANCE_MAX
+    return float(value)
+
+
+def _as_float(value) -> Optional[float]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _clip(text: str, limit: int) -> str:
     body = (text or "").strip()
     if len(body) <= limit:
@@ -112,10 +140,11 @@ def new_artifact_names(repo_root: Path, task_id: int) -> list[str]:
 
 
 class LongMemory:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, distance_max: Optional[float] = None) -> None:
         self.path = Path(path)
         self._lock = threading.Lock()
         self._collection = None
+        self.distance_max = _distance_limit(distance_max)
 
     def _open(self):
         with self._lock:
@@ -164,7 +193,7 @@ class LongMemory:
         log.info("[memory] stored task_id=%s files=%s" % (task_id, len(shown)))
 
     def recall(self, prompt: str) -> str:
-        """System-prompt block of the three nearest past tasks. Empty if none."""
+        """System-prompt block of up to three relevant past tasks. Empty if none pass."""
         query = (prompt or "").strip()
         if not query:
             return ""
@@ -181,15 +210,23 @@ class LongMemory:
         documents = (found.get("documents") or [[]])[0] or []
         metadatas = (found.get("metadatas") or [[]])[0] or []
         distances = (found.get("distances") or [[]])[0] or []
+        ids = (found.get("ids") or [[]])[0] or []
         blocks: list[str] = []
         for index, document in enumerate(documents):
             if not document:
                 continue
             meta = metadatas[index] if index < len(metadatas) and isinstance(metadatas[index], dict) else {}
             task_id = meta.get("task_id", "")
-            distance = distances[index] if index < len(distances) else None
-            if isinstance(distance, float):
-                log.info("[memory] hit task_id=%s distance=%.3f" % (task_id, distance))
+            memory_id = ids[index] if index < len(ids) and ids[index] else "task-%s" % task_id
+            distance = _as_float(distances[index] if index < len(distances) else None)
+            if distance is None or distance > self.distance_max:
+                shown = "%.3f" % distance if distance is not None else "missing"
+                log.info(
+                    "[memory] filter out low-relevance memory id=%s, distance=%s over threshold %s"
+                    % (memory_id, shown, self.distance_max)
+                )
+                continue
+            log.info("[memory] hit task_id=%s distance=%.3f" % (task_id, distance))
             blocks.append("[%s] 任务 %s\n%s" % (len(blocks) + 1, task_id, _clip(str(document), _INJECT_LIMIT)))
         if not blocks:
             return ""

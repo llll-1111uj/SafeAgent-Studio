@@ -17,6 +17,7 @@ logs/
 .worktrees/index.json
 .worktrees/events.jsonl
 .worktrees/index.lock
+.worktrees/traces/
 
 # 沙箱导出的产物（这些是动态生成的，不应该纳入版本控制）
 .worktrees/artifacts/
