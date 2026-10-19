@@ -20,7 +20,9 @@
 
 ## 活动图
 
-一次任务从页面提交到收尾的顺序。后台 Reaper 不在这条主路径上，它只按截止时间清理过期容器。
+一次任务从页面提交到收尾的顺序。后台 Reaper 不在这条主路径上，它只按截止时间清理过期容器。图由 `activity_map.py` 生成，源文件是 `activity_map.mmd`。
+
+![SafeAgent Studio 活动图](activity_map.png)
 
 ```mermaid
 flowchart TD
@@ -56,6 +58,7 @@ flowchart TD
   held --> mem
   gone --> mem
   mem --> endNode([结束])
+  
 ```
 
 浏览器负责提交、审批弹窗、运行日志和结果卡片。FastAPI 的任务线程调用大模型并执行工具。Docker 只在沙箱工具真正执行时出现。Chroma 在循环开始前注入历史，在任务成功结束时再写一条。

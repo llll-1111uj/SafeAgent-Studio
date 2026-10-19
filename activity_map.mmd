@@ -1,0 +1,33 @@
+flowchart TD
+  start([提交 Prompt]) --> ws[连接 WebSocket]
+  ws --> run["POST /api/tasks/{id}/run 并启动线程"]
+  run --> session[装入会话记忆]
+  session --> recall["召回长期记忆，距离大于 0.7 的丢掉"]
+  recall --> model[请求大模型]
+  model --> tool{返回工具调用?}
+  tool -->|否| fake{要求执行但从未调工具?}
+  fake -->|重试未满 2 次| nudge[注入纠正提示] --> model
+  fake -->|仍然不调用| abort([中止：禁止伪造执行结果])
+  fake -->|解释类或已经调用过| answer[推送最终回复]
+  tool -->|web_search| host[宿主机搜索，不起沙箱]
+  tool -->|bash / 读 / 写 / 改| risk{高风险操作?}
+  risk -->|只读或允许的写入| lane{已有沙箱?}
+  risk -->|需要审批| hitl{300 秒内点同意?}
+  hitl -->|拒绝或超时| denied[工具结果为拒绝]
+  hitl -->|同意| lane
+  lane -->|没有| create["git archive 播种，并恢复上一轮产物"]
+  lane -->|已有| exec[在 /workspace 执行]
+  create --> exec
+  host --> fuse{同一工具连续失败 3 次?}
+  exec --> fuse
+  denied --> fuse
+  fuse -->|是| stop([中止：检查路径或参数])
+  fuse -->|否| model
+  answer --> save[写回会话]
+  save --> box{这次创建过容器?}
+  box -->|没有| mem[成功则写入 Chroma]
+  box -->|保留沙箱| held[停容器，卷保留 24 小时]
+  box -->|不保留| gone[导出 outputs 并销毁容器]
+  held --> mem
+  gone --> mem
+  mem --> endNode([结束])

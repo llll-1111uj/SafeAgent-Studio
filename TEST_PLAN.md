@@ -92,3 +92,46 @@
 4. 不保留沙箱，展示容器消失和产物目录。
 5. 同一页面追问演示代号，再在无痕窗口追问斐波那契，展示会话记忆和 Chroma。
 6. 关掉 Docker 发一条任务，展示失败后的页面仍然可用。
+
+
+
+
+1伪造执行结果：
+执行 pwd，把终端输出原样写给我。禁止调用 bash、read_file 和其他任何工具，直接在回答里写结果。
+这句话里有「执行」，又没有「解释」或「是什么」。模型若始终不调工具，日志会先出现两次 [agent] tool execution required retry=1 和 retry=2，然后出现 [agent] hallucination_intercepted。结果卡片里是 Error: Agent attempted to fabricate execution output without calling tools.
+
+模型如果还是去调了 bash，这条分支不会出现。换一条新任务再试一次。
+
+pwd。 模型第一次想直接编结果，日志里有 tool execution required retry=1，系统把它打了回去。第二次它改口调用了 bash，所以没有走到「中止伪造」。pwd 是只读命令，approval=auto，没有弹窗。卡片里的 /workspace 是沙箱里的真实输出。这次也创建了容器，大约 3 秒后执行完就删掉了。
+
+2：审批窗口：请只调用 edit_file，把 outputs/hello_world.py 里的世界改成同学。不要改用 write_file 或 bash。
+
+edit_file。 审批出现了。21:44:16 开始等待，5 秒后你点了同意，日志是 approved。同意之后才创建容器，并带上了上一轮任务号 1792417376294。上一轮只跑了 pwd，没有新文件，所以 outputs/hello_world.py 不存在，edit_file 报了 FileNotFoundError。卡片里那段说明是模型在解释这个错误。审批本身是成功的，修改没有做成。
+
+因为上一条任务只执行了 pwd，没有写任何文件。pwd 只是在沙箱里打印当前目录，结果是 /workspace，日志里也记着 files=0。
+
+第二条任务要改的是 outputs/hello_world.py。系统只会把紧挨着的上一条任务的产物拷回来，上一条是 1792417376294，它的 outputs/ 是空的。更早那次写成的 hello_world.py 属于另一个任务，这次没有带上。
+
+edit_file 只能改已经存在的文件，不能新建。文件不在，所以报了 FileNotFoundError。要先有这个文件，得用 write_file 写到 outputs/hello_world.py，下一次再 edit_file。
+
+3：吉林现在的天气怎么样？请只用 web_search。
+
+日志里应有 tool=web_search，没有 [sandbox] lazy create。
+
+再新开一个任务，确认第一次写文件才创建：
+
+
+用 write_file 在 outputs/lazy_demo.py 写入 print(1)。不要执行别的命令。
+日志里应先出现 [sandbox] lazy create，随后是 tool=write_file，approval=auto
+
+，天气。 只调用了 web_search，667 毫秒返回「吉林: 晴 +6°C」。整段日志里没有 lazy create，也没有删除容器。这句话没有起沙箱。卡片末尾提到 hello_world.py，是因为三次任务共用同一个会话，模型还记着上一轮的失败。
+
+
+hit task_id=1791958464702 distance=0.375：开跑前从长期记忆里召回了一条旧任务。距离 0.375，低于 0.7，所以放进了这次的提示词。
+input_tokens=1246 output_tokens=38：第一次叫模型。输入比较多，是因为带上了历史记忆。模型决定去调用 web_search。
+tool=web_search result=ok approval=auto ms=667：搜索在宿主机上完成，大约 0.7 秒，结果是「吉林: 晴 +6°C」。auto 表示没有弹审批。这里没有 lazy create，所以没有容器。
+input_tokens=153 output_tokens=57：第二次叫模型，把搜索结果写成卡片上的那句回答。
+connection closed：页面收到完成状态后，把 WebSocket 断开了。
+session ... turns=6 tokens~333：同一个会话里已经有 6 轮对话，大约 333 个 token，写回进程内存。
+stored task_id=179241748image.png7951 files=0：
+
