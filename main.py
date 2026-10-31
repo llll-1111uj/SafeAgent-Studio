@@ -28,6 +28,7 @@ if str(AGENTS_DIR) not in sys.path:
     sys.path.insert(0, str(AGENTS_DIR))
 
 from utils.logger import configure_logging, get_logger
+from utils.tracing import flush_client, init_client
 
 configure_logging(ROOT)
 log = get_logger("api")
@@ -500,6 +501,7 @@ async def lifespan(app: FastAPI):
     agent.set_approval_waiter(broker.wait)
     agent.set_status_publisher(_publish_status)
     _log_routes()
+    init_client()
     try:
         _reaper = SandboxReaper(repo_root=ROOT)
         log.info("[sandbox] reconciliation %s", _reaper.startup_reconciliation())
@@ -513,6 +515,7 @@ async def lifespan(app: FastAPI):
         if _reaper is not None:
             _reaper.stop()
             _reaper = None
+        flush_client()
 
 
 app = FastAPI(title="SafeAgent Studio", lifespan=lifespan)

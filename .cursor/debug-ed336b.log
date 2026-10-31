@@ -1,0 +1,1 @@
+{"sessionId": "ed336b", "hypothesisId": "H1", "location": "agents/core_agent.py:_validate_tool_execution", "message": "tool gate", "data": {"state_query": true, "explain": false, "command_action": false, "has_tool": false, "retries": 0, "verdict": "nudge"}, "timestamp": 1793468203483}

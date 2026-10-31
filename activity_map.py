@@ -32,14 +32,14 @@ def _nodes():
     return [
         ("start", "term", "提交 Prompt", 280, 56, 180, 46),
         ("ws", "step", "连接 WebSocket", 280, 132, 190, 46),
-        ("run", "step", "POST /run 并启动线程", 280, 208, 230, 46),
+        ("run", "step", "POST /api/tasks/{id}/run\n并启动线程", 280, 208, 270, 62),
         ("session", "step", "装入会话记忆", 280, 284, 180, 46),
-        ("recall", "step", "召回长期记忆\n距离大于 0.7 的丢掉", 280, 372, 230, 62),
-        ("model", "step", "请求大模型", 280, 470, 170, 46),
+        ("recall", "step", "召回长期记忆\n最多 3 条，距离大于 0.7 丢掉", 280, 372, 290, 62),
+        ("model", "step", "请求 DeepSeek", 280, 470, 180, 46),
         ("tool", "ask", "返回工具调用?", 280, 590, 200, 108),
-        ("fake", "ask", "要求执行\n但从未调工具?", 280, 790, 210, 112),
+        ("fake", "ask", "执行或查看工作区\n但从未调工具?", 280, 790, 220, 112),
         ("nudge", "step", "注入纠正提示", 90, 680, 150, 46),
-        ("abort", "bad", "中止：禁止伪造执行结果", 280, 960, 250, 46),
+        ("abort", "bad", "替换为安全错误", 280, 960, 200, 46),
         ("answer", "term", "推送最终回复", 560, 790, 180, 46),
         ("save", "step", "写回会话", 560, 890, 150, 46),
         ("box", "ask", "这次创建过容器?", 560, 1030, 210, 108),
@@ -48,14 +48,14 @@ def _nodes():
         ("mem", "step", "成功则写入 Chroma", 560, 1340, 210, 46),
         ("end", "term", "结束", 560, 1430, 120, 46),
         ("host", "sand", "宿主机搜索\n不起沙箱", 620, 590, 180, 64),
-        ("risk", "ask", "高风险操作?", 920, 470, 190, 100),
+        ("risk", "ask", "需要审批?", 920, 470, 190, 100),
         ("hitl", "ask", "300 秒内点同意?", 1180, 680, 220, 108),
-        ("denied", "bad", "工具结果为拒绝", 1180, 860, 180, 46),
+        ("denied", "bad", "工具结果为拒绝", 1240, 860, 180, 46),
         ("lane", "ask", "已有沙箱?", 920, 680, 180, 108),
-        ("create", "sand", "git archive 播种\n并恢复上一轮产物", 740, 860, 220, 64),
+        ("create", "sand", "git archive 播种\n排除 .env，拷回产物", 770, 860, 210, 64),
         ("exec", "sand", "在 /workspace 执行", 1000, 860, 200, 46),
         ("fuse", "ask", "同一工具\n连续失败 3 次?", 1000, 1040, 210, 112),
-        ("stop", "bad", "中止：检查路径或参数", 1280, 1040, 240, 46),
+        ("stop", "bad", "中止：检查路径或参数", 1360, 1040, 240, 46),
     ]
 
 
@@ -73,11 +73,11 @@ def _edges():
         ("model", "tool", "", "bottom", "top", "straight"),
         ("tool", "fake", "否", "bottom", "top", "straight"),
         ("tool", "host", "web_search", "right", "left", "straight"),
-        ("tool", "risk", "bash / 读 / 写 / 改", "right", "left", [(500, 520), (820, 470)]),
-        ("fake", "nudge", "重试未满 2 次", "left", "bottom", [(175, 790)]),
+        ("tool", "risk", "bash / 读 / 写 / 改", "right", "left", [(450, 430), (800, 430)]),
+        ("fake", "nudge", "重试未满 2 次", "left", "bottom", [(40, 790)]),
         ("nudge", "model", "", "top", "left", [(90, 470)]),
         ("fake", "abort", "仍然不调用", "bottom", "top", "straight"),
-        ("fake", "answer", "解释类或已经调用过", "right", "left", "straight"),
+        ("fake", "answer", "可以直接回答", "right", "left", "straight"),
         ("answer", "save", "", "bottom", "top", "straight"),
         ("save", "box", "", "bottom", "top", "straight"),
         ("box", "held", "保留沙箱", "left", "top", [(470, 1200)]),
@@ -87,15 +87,15 @@ def _edges():
         ("gone", "mem", "", "bottom", "right", [(730, 1340)]),
         ("mem", "end", "", "bottom", "top", "straight"),
         ("risk", "lane", "只读或允许的写入", "bottom", "top", "straight"),
-        ("risk", "hitl", "需要审批", "right", "top", [(1180, 470)]),
+        ("risk", "hitl", "改文件、安装、删除、重定向", "right", "top", [(1180, 470)]),
         ("hitl", "denied", "拒绝或超时", "bottom", "top", "straight"),
         ("hitl", "lane", "同意", "left", "right", "straight"),
-        ("lane", "create", "没有", "left", "top", [(800, 740)]),
+        ("lane", "create", "没有", "left", "top", [(770, 740)]),
         ("lane", "exec", "已有", "bottom", "top", [(1000, 760)]),
         ("create", "exec", "", "right", "left", "straight"),
         ("host", "fuse", "", "bottom", "bottom", [(620, 710), (430, 710), (430, 1136), (1000, 1136)]),
         ("exec", "fuse", "", "bottom", "top", "straight"),
-        ("denied", "fuse", "", "left", "right", [(1120, 860), (1120, 1040)]),
+        ("denied", "fuse", "", "right", "bottom", [(1540, 860), (1540, 1180), (1000, 1180)]),
         ("fuse", "stop", "是", "right", "left", "straight"),
         ("fuse", "model", "否", "top", "right", [(1500, 984), (1500, 408), (370, 408)]),
     ]
@@ -153,7 +153,15 @@ def _shape(node) -> str:
     return body + label
 
 
-def _arrow(points, label: str) -> str:
+# Which segment carries the label, and how far to shift it.
+# Positive dy moves the text downward.
+_LABEL = {
+    ("tool", "risk"): (1, 18),
+    ("fuse", "model"): (1, -12),
+}
+
+
+def _arrow(points, label: str, segment: int = 0, dy: float = -8) -> str:
     cleaned = [points[0]]
     for point in points[1:]:
         if abs(point[0] - cleaned[-1][0]) < 0.5 and abs(point[1] - cleaned[-1][1]) < 0.5:
@@ -186,8 +194,9 @@ def _arrow(points, label: str) -> str:
         f'<polygon points="{x2:.1f},{y2:.1f} {left[0]:.1f},{left[1]:.1f} {right[0]:.1f},{right[1]:.1f}" fill="#334155"/>',
     ]
     if label:
-        lx = (cleaned[0][0] + cleaned[1][0]) / 2
-        ly = (cleaned[0][1] + cleaned[1][1]) / 2 - 8
+        index = min(segment, len(cleaned) - 2)
+        lx = (cleaned[index][0] + cleaned[index + 1][0]) / 2
+        ly = (cleaned[index][1] + cleaned[index + 1][1]) / 2 + dy
         parts.append(
             f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" font-family="{FONT}" '
             f'font-size="12" fill="#475569">{_escape(label)}</text>'
@@ -202,6 +211,7 @@ def build_svg() -> str:
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="#ffffff"/>',
         f'<text x="32" y="28" font-family="{FONT}" font-size="18" font-weight="700" fill="#111827">SafeAgent Studio 活动图</text>',
+        f'<text x="430" y="26" font-family="{FONT}" font-size="13" fill="#475569">先召回记忆再请求 DeepSeek。Langfuse 并行记 Trace，不改变控制流。</text>',
     ]
     for src, dst, label, out_side, in_side, route in _edges():
         start = _side_point(nodes[src], out_side)
@@ -210,7 +220,8 @@ def build_svg() -> str:
             points = [start, end]
         else:
             points = [start, *route, end]
-        chunks.append(_arrow(points, label))
+        segment, dy = _LABEL.get((src, dst), (0, -8))
+        chunks.append(_arrow(points, label, segment, dy))
     for node in _nodes():
         chunks.append(_shape(node))
     chunks.append("</svg>")
@@ -228,9 +239,10 @@ def _write_png(svg_text: str) -> bool:
     image = Image.new("RGB", (1580, 1520), "white")
     draw = ImageDraw.Draw(image)
     draw.text((32, 8), "SafeAgent Studio 活动图", fill="#111827", font=title)
+    draw.text((430, 4), "先召回记忆再请求 DeepSeek。Langfuse 并行记 Trace，不改变控制流。", fill="#475569", font=small)
     nodes = {item[0]: item for item in _nodes()}
 
-    def line(points, label):
+    def line(points, label, segment=0, dy=-16):
         cleaned = [points[0]]
         for point in points[1:]:
             if abs(point[0] - cleaned[-1][0]) < 0.5 and abs(point[1] - cleaned[-1][1]) < 0.5:
@@ -253,8 +265,9 @@ def _write_png(svg_text: str) -> bool:
         )
         draw.polygon([(x2, y2), left, right], fill="#334155")
         if label:
-            lx = (cleaned[0][0] + cleaned[1][0]) / 2
-            ly = (cleaned[0][1] + cleaned[1][1]) / 2 - 16
+            index = min(segment, len(cleaned) - 2)
+            lx = (cleaned[index][0] + cleaned[index + 1][0]) / 2
+            ly = (cleaned[index][1] + cleaned[index + 1][1]) / 2 + dy
             box = draw.textbbox((0, 0), label, font=small)
             tw, th = box[2] - box[0], box[3] - box[1]
             draw.rectangle((lx - tw / 2 - 2, ly - 2, lx + tw / 2 + 2, ly + th + 2), fill="white")
@@ -264,7 +277,8 @@ def _write_png(svg_text: str) -> bool:
         start = _side_point(nodes[src], out_side)
         end = _side_point(nodes[dst], in_side)
         points = [start, end] if route == "straight" else [start, *route, end]
-        line(points, label)
+        segment, dy = _LABEL.get((src, dst), (0, -16))
+        line(points, label, segment, dy)
 
     for nid, kind, text, cx, cy, w, h in _nodes():
         fill, stroke = COLORS[kind]

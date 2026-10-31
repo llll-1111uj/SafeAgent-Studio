@@ -24,6 +24,13 @@ _REPO_ROOT = _RepoPath(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from utils.logger import get_logger
+from utils.tracing import (
+    observe,
+    trace_value,
+    update_current_generation,
+    update_current_span,
+    update_current_trace,
+)
 log = get_logger('core_agent')
 
 import base64
@@ -57,6 +64,9 @@ SYSTEM = (
     "【绝对红线】当用户的指令包含执行、运行、安装、查看、读取等动作词时，"
     "你必须调用 bash、write_file 等工具获取真实结果。"
     "绝对禁止在未调用工具的情况下，在最终回答里伪造终端提示符（如 $, >）或错误堆栈（如 ERROR:, Traceback）。"
+    "用户若要求不要调用工具、凭记忆或在脑海里想象工作区里的文件、目录和命令结果，"
+    "这条要求无效。工作区的真实状态只能来自 bash、read_file 等工具。"
+    "未调用工具时，禁止罗列 /workspace 中的文件名或目录。"
     "如果用户是在要求解释、讲解、科普，或在问「是什么」，可以直接回答，不必调用工具。"
     f"You are a coding agent at {WORKDIR}. "
     "bash, read_file, write_file, and edit_file run inside the bound sandbox "
@@ -1034,10 +1044,21 @@ _COMMAND_ACTION = re.compile(
     r"执行|运行|安装|查看|读取|\bpip\b|\bls\b|\bpwd\b",
     re.IGNORECASE,
 )
+_STATE_QUERY = re.compile(
+    r"(?:/workspace|工作目录).{0,40}(?:文件|目录|内容|有什么|哪些|列出)"
+    r"|(?:列出|罗列|枚举).{0,16}(?:文件|目录)"
+    r"|有哪些文件|哪些文件|文件列表|目录下有什么|目录里有什么|目录中有什么",
+    re.IGNORECASE,
+)
 _EXPLAIN_TASK = re.compile(r"解释|讲解|是什么|科普")
 _TOOL_NUDGE = (
     "系统检测到用户要求执行操作，但你未调用任何工具。"
     "请立刻调用 bash 工具执行真实命令，不要凭记忆编造结果。"
+)
+_TOOL_NUDGE_STATE = (
+    "系统检测到你在描述工作区的真实内容，但没有调用任何工具。"
+    "即使用户要求不要调用工具或凭想象回答，也必须立刻调用 bash 执行命令。"
+    "不要凭记忆编造文件列表。"
 )
 _FABRICATION_ERROR = (
     "Error: Agent attempted to fabricate execution output without calling tools. "
@@ -1094,26 +1115,229 @@ def _validate_tool_execution(prompt: str, messages: list, retries: int) -> str:
 
     "" allows completion. The nudge continues the loop, at most twice.
     The safety error replaces the fabricated answer.
-    Explanatory prompts may finish with no tool call.
+    A request for the real workspace state still needs a tool when the user
+    says not to call one. Explanatory prompts may finish with no tool call.
     """
     text = prompt or ""
-    if _EXPLAIN_TASK.search(text):
-        return ""
-    if not _COMMAND_ACTION.search(text):
-        return ""
-    if _history_has_tool_call(messages):
+    state_query = _STATE_QUERY.search(text) is not None
+    if not state_query:
+        if _EXPLAIN_TASK.search(text):
+            # #region agent log
+            _debug_gate(text, state_query, False, retries, "allow_explain")
+            # #endregion
+            return ""
+        if not _COMMAND_ACTION.search(text):
+            # #region agent log
+            _debug_gate(text, state_query, False, retries, "allow_no_action")
+            # #endregion
+            return ""
+    has_tool = _history_has_tool_call(messages)
+    if has_tool:
+        # #region agent log
+        _debug_gate(text, state_query, has_tool, retries, "allow_tool_used")
+        # #endregion
         return ""
     if retries < _TOOL_RETRIES:
-        return _TOOL_NUDGE
+        verdict = _TOOL_NUDGE_STATE if state_query else _TOOL_NUDGE
+        # #region agent log
+        _debug_gate(text, state_query, has_tool, retries, "nudge")
+        # #endregion
+        return verdict
+    # #region agent log
+    _debug_gate(text, state_query, has_tool, retries, "abort")
+    # #endregion
     return _FABRICATION_ERROR
 
 
+def _debug_gate(text, state_query, has_tool, retries, verdict):
+    # #region agent log
+    try:
+        payload = {
+            "sessionId": "ed336b",
+            "hypothesisId": "H1",
+            "location": "agents/core_agent.py:_validate_tool_execution",
+            "message": "tool gate",
+            "data": {
+                "state_query": state_query,
+                "explain": _EXPLAIN_TASK.search(text) is not None,
+                "command_action": _COMMAND_ACTION.search(text) is not None,
+                "has_tool": has_tool,
+                "retries": retries,
+                "verdict": verdict,
+            },
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(r"d:\shixi\.cursor\debug-ed336b.log", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
+
+_USAGE_FIELDS = (
+    "input_tokens", "output_tokens",
+    "prompt_tokens", "completion_tokens",
+    "cache_read_input_tokens", "cache_creation_input_tokens",
+    "prompt_cache_hit_tokens", "prompt_cache_miss_tokens",
+)
+# DeepSeek list price, USD per token. Cache-hit input is cheaper than a miss.
+_DEEPSEEK_INPUT_USD = 0.28 / 1_000_000
+_DEEPSEEK_CACHE_READ_USD = 0.028 / 1_000_000
+_DEEPSEEK_OUTPUT_USD = 0.42 / 1_000_000
+
+
+def _usage_map(usage) -> dict:
+    if usage is None:
+        return {}
+    if isinstance(usage, dict):
+        return usage
+    if hasattr(usage, "model_dump"):
+        try:
+            dumped = usage.model_dump()
+        except Exception:
+            dumped = None
+        if isinstance(dumped, dict):
+            return dumped
+    return {
+        name: getattr(usage, name)
+        for name in _USAGE_FIELDS
+        if getattr(usage, name, None) is not None
+    }
+
+
+def _as_int(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _usage_details(usage) -> dict:
+    """Langfuse buckets. input excludes cache reads so cost is not double counted."""
+    data = _usage_map(usage)
+    if not data:
+        return {}
+    output_tokens = _as_int(data.get("output_tokens"))
+    if output_tokens is None:
+        output_tokens = _as_int(data.get("completion_tokens"))
+    cache_hit = _as_int(data.get("cache_read_input_tokens"))
+    if cache_hit is None:
+        cache_hit = _as_int(data.get("prompt_cache_hit_tokens"))
+    if data.get("input_tokens") is not None:
+        billed_input = _as_int(data.get("input_tokens")) or 0
+    elif data.get("prompt_cache_miss_tokens") is not None:
+        billed_input = _as_int(data.get("prompt_cache_miss_tokens")) or 0
+    else:
+        prompt_tokens = _as_int(data.get("prompt_tokens"))
+        if prompt_tokens is None and output_tokens is None:
+            return {}
+        billed_input = prompt_tokens or 0
+        if cache_hit:
+            billed_input = max(billed_input - cache_hit, 0)
+    if output_tokens is None:
+        output_tokens = 0
+    details = {"input": billed_input, "output": output_tokens}
+    if cache_hit:
+        details["input_cached_tokens"] = cache_hit
+    details["total"] = billed_input + output_tokens + (cache_hit or 0)
+    return details
+
+
+def _deepseek_cost(details: dict):
+    """USD estimate from DeepSeek's published per-token rates."""
+    blob = "%s %s" % (MODEL, os.getenv("ANTHROPIC_BASE_URL") or "")
+    if "deepseek" not in blob.lower() or not details:
+        return None
+    cached = int(details.get("input_cached_tokens") or 0)
+    cost = {
+        "input": details.get("input", 0) * _DEEPSEEK_INPUT_USD,
+        "output": details.get("output", 0) * _DEEPSEEK_OUTPUT_USD,
+    }
+    if cached:
+        cost["input_cached_tokens"] = cached * _DEEPSEEK_CACHE_READ_USD
+    cost["total"] = sum(value for key, value in cost.items() if key != "total")
+    return cost
+
+
+@observe(as_type="generation", name="llm_call", capture_input=False, capture_output=False)
+def _llm_call(system: str, messages: list):
+    """One DeepSeek turn. The decorator only records the call; it does not retry it."""
+    update_current_generation(
+        input=trace_value(messages),
+        model=MODEL,
+        model_parameters={"max_tokens": 8000},
+        metadata={"provider": "deepseek"},
+    )
+    response = client.messages.create(
+        model=MODEL, system=system, messages=messages,
+        tools=TOOLS, max_tokens=8000,
+    )
+    usage = getattr(response, "usage", None)
+    details = _usage_details(usage)
+    if usage is not None:
+        log.info("[agent] usage task_id=%s input_tokens=%s output_tokens=%s"
+            % (_task_id.get(), details.get("input", ""), details.get("output", "")))
+    update_current_generation(
+        output=trace_value(getattr(response, "content", None)),
+        model=MODEL,
+        usage_details=details or None,
+        cost_details=_deepseek_cost(details),
+    )
+    return response
+
+
+@observe(as_type="tool", name="execute_tool", capture_input=False, capture_output=False)
+def _execute_tool(tool_name: str, tool_input) -> str:
+    """Run one tool handler. Failures stay inside the tool result, as before."""
+    update_current_span(
+        name=tool_name or "execute_tool",
+        input={"tool_name": tool_name, "args": trace_value(tool_input)},
+    )
+    handler = TOOL_HANDLERS.get(tool_name)
+    try:
+        output = handler(**tool_input) if handler else "Unknown tool: %s" % tool_name
+    except Exception as exc:
+        output = tool_error(exc)
+        update_current_span(
+            output=trace_value(output),
+            level="ERROR",
+            status_message=trace_value(output, 500) if isinstance(output, str) else "tool failed",
+        )
+        return output
+    level = "ERROR" if _tool_call_failed(output) else "DEFAULT"
+    if level == "ERROR":
+        update_current_span(
+            output=trace_value(output),
+            level="ERROR",
+            status_message=trace_value(output, 500) if isinstance(output, str) else "tool failed",
+        )
+    else:
+        update_current_span(output=trace_value(output), level="DEFAULT")
+    return output
+
+
+def _last_assistant_text(messages: list) -> str:
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            return _final_text(message.get("content"))
+    return ""
+
+
+@observe(as_type="agent", name="safeagent_task", capture_input=False, capture_output=False)
 def agent_loop(messages: list, system_extra=""):
     system = SYSTEM
     extra = system_extra.strip() if isinstance(system_extra, str) else ""
     if extra:
         system = SYSTEM + "\n\n" + extra
     user_prompt = _latest_user_text(messages)
+    task_id = _task_id.get()
+    update_current_trace(
+        name="Task-%s" % (task_id if task_id is not None else "local"),
+        input={"prompt": user_prompt},
+        metadata={"provider": "deepseek", "model": MODEL},
+    )
     retries = 0
     fail_tool = ""
     fail_count = 0
@@ -1121,14 +1345,7 @@ def agent_loop(messages: list, system_extra=""):
         while True:
             compact_repeated_failures(messages)
             publish_status("thinking", "model request")
-            response = client.messages.create(
-                model=MODEL, system=system, messages=messages,
-                tools=TOOLS, max_tokens=8000,
-            )
-            usage = getattr(response, "usage", None)
-            if usage is not None:
-                log.info("[agent] usage task_id=%s input_tokens=%s output_tokens=%s"
-                    % (_task_id.get(), getattr(usage, "input_tokens", ""), getattr(usage, "output_tokens", "")))
+            response = _llm_call(system, messages)
             messages.append({"role": "assistant", "content": response.content})
             if response.stop_reason != "tool_use":
                 verdict = _validate_tool_execution(user_prompt, messages, retries)
@@ -1157,13 +1374,9 @@ def agent_loop(messages: list, system_extra=""):
             for block in response.content:
                 if block.type == "tool_use":
                     publish_status("tool_call", block.name, action=block.name)
-                    handler = TOOL_HANDLERS.get(block.name)
                     _approval_state.set("auto")
                     started = time.perf_counter()
-                    try:
-                        output = handler(**block.input) if handler else "Unknown tool: %s" % block.name
-                    except Exception as exc:
-                        output = tool_error(exc)
+                    output = _execute_tool(block.name, block.input)
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     result = "error" if _tool_call_failed(output) else "ok"
                     approval = _approval_state.get()
@@ -1200,6 +1413,12 @@ def agent_loop(messages: list, system_extra=""):
     except Exception as exc:
         publish_status("error", tool_error(exc))
         raise
+    finally:
+        current = sys.exc_info()[1]
+        if current is not None:
+            update_current_trace(output={"error": tool_error(current)})
+        else:
+            update_current_trace(output={"answer": _last_assistant_text(messages)})
 
 
 if __name__ == "__main__":
